@@ -1,0 +1,46 @@
+# Django LTS + libs compatíveis
+Django==4.2.16
+djangorestframework==3.14.0
+django-cors-headers==4.3.1
+django-extensions==3.2.3
+
+# Banco
+psycopg2-binary==2.9.9
+
+# Tarefas
+celery==5.3.4
+redis==5.0.1
+django-celery-beat==2.5.0   # exige Django <5
+django-celery-results==2.5.1
+
+# Utilitários
+python-decouple==3.8
+pandas==2.1.4
+numpy==1.26.3
+
+# SSH/MySQL
+sshtunnel==0.4.0
+PyMySQL==1.1.0
+
+# Processamento
+openpyxl==3.1.2
+xlsxwriter==3.1.9
+
+# Admin
+django-admin-interface==0.26.1
+django-import-export==3.3.5
+
+# Filtros
+django-filter==23.5
+
+# API e auth
+drf-yasg==1.21.7
+djangorestframework-simplejwt==5.3.1
+
+# Produção
+gunicorn==21.2.0
+whitenoise==6.6.0
+
+# Dev
+ipython==8.18.1
+django-debug-toolbar==4.2.0

@@ -1,46 +1,104 @@
-# Django LTS + libs compatíveis
+# ========================================
+# Django Core - LTS Version
+# ========================================
 Django==4.2.16
 djangorestframework==3.14.0
 django-cors-headers==4.3.1
 django-extensions==3.2.3
 
-# Banco
+# ========================================
+# Banco de Dados
+# ========================================
 psycopg2-binary==2.9.9
-
-# Tarefas
-celery==5.3.4
 redis==5.0.1
-django-celery-beat==2.5.0   # exige Django <5
+
+# ========================================
+# Cache e Sessões
+# ========================================
+django-redis==5.4.0
+hiredis==2.3.2  # Performance boost para Redis
+
+# ========================================
+# Tarefas Assíncronas (Celery)
+# ========================================
+celery==5.3.4
+django-celery-beat==2.5.0
 django-celery-results==2.5.1
+flower==2.0.1  # Monitor para Celery
 
-# Utilitários
+# ========================================
+# Admin Interface Melhorado
+# ========================================
+django-admin-interface==0.26.1
+django-import-export==3.3.5
+django-colorfield==0.11.0
+
+# ========================================
+# API e Documentação
+# ========================================
+drf-yasg==1.21.7
+djangorestframework-simplejwt==5.3.1
+django-filter==23.5
+
+# ========================================
+# Configuração e Segurança
+# ========================================
 python-decouple==3.8
-pandas==2.1.4
-numpy==1.26.3
+python-dotenv==1.0.0
+cryptography==41.0.7
 
-# SSH/MySQL
+# ========================================
+# SSH e Conexão MySQL/WooCommerce
+# ========================================
 sshtunnel==0.4.0
 PyMySQL==1.1.0
+mysqlclient==2.2.4  # Alternativa ao PyMySQL
 
-# Processamento
+# ========================================
+# Processamento de Dados
+# ========================================
+pandas==2.1.4
+numpy==1.26.3
 openpyxl==3.1.2
 xlsxwriter==3.1.9
 
-# Admin
-django-admin-interface==0.26.1
-django-import-export==3.3.5
+# ========================================
+# Utilitários
+# ========================================
+Pillow==10.2.0  # Processamento de imagens
+requests==2.31.0  # Requisições HTTP
+beautifulsoup4==4.12.3  # Parser HTML
+lxml==5.1.0  # Parser XML
 
-# Filtros
-django-filter==23.5
-
-# API e auth
-drf-yasg==1.21.7
-djangorestframework-simplejwt==5.3.1
-
-# Produção
+# ========================================
+# Servidor de Produção
+# ========================================
 gunicorn==21.2.0
 whitenoise==6.6.0
+dj-database-url==2.1.0  # Parse de DATABASE_URL
 
-# Dev
+# ========================================
+# Monitoramento e Logs
+# ========================================
+sentry-sdk==1.40.0  # Monitoramento de erros
+django-health-check==3.18.1  # Health checks
+django-silk==5.1.0  # Profiling de requests
+
+# ========================================
+# Desenvolvimento e Debug
+# ========================================
 ipython==8.18.1
 django-debug-toolbar==4.2.0
+black==24.1.1  # Formatador de código
+flake8==7.0.0  # Linter
+pytest==7.4.4  # Testes
+pytest-django==4.7.0
+pytest-cov==4.1.0  # Coverage
+factory-boy==3.3.0  # Fixtures para testes
+faker==22.2.0  # Dados fake para testes
+
+# ========================================
+# Timezone e Localização
+# ========================================
+pytz==2023.3.post1
+tzdata==2023.4

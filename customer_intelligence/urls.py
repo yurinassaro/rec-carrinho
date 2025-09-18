@@ -15,7 +15,7 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path
+from django.urls import include, path
 
 from rest_framework import routers
 from customers.views import CustomerViewSet
@@ -23,7 +23,11 @@ from customers.views import CustomerViewSet
 router = routers.DefaultRouter()
 router.register(r'customers', CustomerViewSet)
 
+# ERRADO - router não foi criado
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/', include(router.urls)),
+    path('api/', include(router.urls)),  # ← router não existe ainda!
 ]
+
+# router criado depois
+router = routers.DefaultRouter()
