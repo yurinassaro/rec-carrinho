@@ -1,0 +1,64 @@
+# --- Python / Django
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtualenv
+.venv/
+venv/
+env/
+
+# Logs e temporários
+*.log
+*.pot
+*.py,cover
+*.pid
+*.tmp
+*.swp
+
+# Banco local / artefatos
+db.sqlite3
+celerybeat-schedule*
+celerybeat.pid
+
+# Uploads e arquivos gerados
+media/
+staticfiles/        # pasta do collectstatic
+# (se você versiona uma pasta "static/" com seus assets fonte, NÃO ignore "static/")
+# static/           # descomente se quiser ignorar também
+
+# Testes / coverage / tooling
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+.tox/
+.mypy_cache/
+.pyre/
+ruff_cache/
+.dmypy.json
+
+# Build / distribuição
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# IDE / SO
+.vscode/
+.idea/
+*.code-workspace
+.DS_Store
+Thumbs.db
+
+# Node (se tiver frontend junto)
+node_modules/
+
+# Segredos
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.p12
