@@ -114,11 +114,11 @@ class Customer(models.Model):
     
     def calculate_score(self):
         """Calcula score do cliente (0-100)"""
-        score = 0
+        score = 0.0  # Usar float desde o início
         
         # Valor gasto (até 40 pontos)
         if self.total_spent > 0:
-            score += min(40, self.total_spent / 100)
+            score += min(40, float(self.total_spent) / 100)
         
         # Frequência (até 30 pontos)
         if self.completed_orders > 0:
@@ -135,7 +135,7 @@ class Customer(models.Model):
         
         # Taxa de conversão (até 10 pontos)
         if self.total_carts > 0:
-            conversion_rate = self.completed_orders / self.total_carts
+            conversion_rate = float(self.completed_orders) / float(self.total_carts)
             score += conversion_rate * 10
         
         return min(100, int(score))

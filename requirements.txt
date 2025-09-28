@@ -50,6 +50,7 @@ cryptography==41.0.7
 # ========================================
 # SSH e Conexão MySQL/WooCommerce
 # ========================================
+paramiko==2.12.0
 sshtunnel==0.4.0
 PyMySQL==1.1.0
 mysqlclient==2.2.4  # Alternativa ao PyMySQL
@@ -98,7 +99,11 @@ factory-boy==3.3.0  # Fixtures para testes
 faker==22.2.0  # Dados fake para testes
 
 # ========================================
+# Para tratamento dos dados vindos serializados do PHP
+phpserialize==1.3.0
+# ========================================
 # Timezone e Localização
 # ========================================
 pytz==2023.3.post1
-tzdata==2023.4
+tzdata==2023.4so nao 
+
