@@ -37,6 +37,8 @@ INSTALLED_APPS = [
     # Local apps
     'customers',
     'analytics',
+    'importer',
+
 ]
 
 MIDDLEWARE = [

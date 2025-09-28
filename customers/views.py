@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from django.db.models import Q, Count, Sum
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import Customer
-from .serializers import CustomerSerializer
+from customers.serializers import CustomerSerializer
 import csv
 from django.http import HttpResponse
 

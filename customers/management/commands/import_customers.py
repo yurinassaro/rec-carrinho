@@ -33,8 +33,31 @@ class Command(BaseCommand):
         }
     
     def handle(self, *args, **options):
-        self.stdout.write('🚀 Iniciando importação inteligente de clientes...')
+
+        start_date = options.get('start_date')
+        end_date = options.get('end_date')
+        import_type = options.get('import_type', 'all')
         
+        # Converter strings para datetime se fornecidas
+        if start_date:
+            self.start_date = datetime.strptime(start_date, '%Y-%m-%d')
+        else:
+            self.start_date = datetime.now() - timedelta(days=30)
+        
+        if end_date:
+            self.end_date = datetime.strptime(end_date, '%Y-%m-%d')
+        else:
+            self.end_date = datetime.now()
+        
+        # Adicionar 23:59:59 ao end_date para incluir o dia todo
+        self.end_date = self.end_date.replace(hour=23, minute=59, second=59)
+    
+        self.stdout.write(
+            f'🚀 Iniciando importação inteligente de clientes...\n'
+            f'📅 Período: {self.start_date.strftime("%d/%m/%Y")} até {self.end_date.strftime("%d/%m/%Y")}\n'
+            f'📦 Tipo: {import_type}'
+        )
+   
         with SSHTunnelForwarder(
             (self.ssh_config['host'], 22),
             ssh_username=self.ssh_config['user'],
@@ -56,22 +79,28 @@ class Command(BaseCommand):
             )
             
             with conn.cursor() as cursor:
-                # 1. Importar clientes e carrinhos
-                self.import_abandoned_carts(cursor)
+                # Executar importações baseado no tipo selecionado
+                if import_type in ['all', 'carts']:
+                    # 1. Importar clientes e carrinhos
+                    self.import_abandoned_carts(cursor)
                 
-                # 2. Importar pedidos
-                self.import_orders(cursor)
+                if import_type in ['all', 'orders']:
+                    # 2. Importar pedidos
+                    self.import_orders(cursor)
+                    
+                    # 3. Enriquecer dados com informações dos pedidos
+                    self.enrich_customer_data_from_orders(cursor)
                 
-                # 3. Enriquecer dados com informações dos pedidos
-                self.enrich_customer_data_from_orders(cursor)
-                
-                # 4. Enriquecer dados com informações do WordPress users
+                # 4. Enriquecer dados com informações do WordPress users (sempre executar)
                 self.enrich_customer_phone_data(cursor)
                 
-                # 5. Análise inteligente
+                # 5. Análise inteligente (sempre executar)
                 self.analyze_customers()
                 
             conn.close()
+
+        self.stdout.write(self.style.SUCCESS('\n✅ Importação concluída com sucesso!'))
+
     
     def custom_object_hook(self, obj):
         """
@@ -305,6 +334,10 @@ class Command(BaseCommand):
     def import_abandoned_carts(self, cursor):
         """Importa carrinhos abandonados e cria/atualiza clientes"""
         
+        # Formatar datas para MySQL
+        start_date_str = self.start_date.strftime('%Y-%m-%d %H:%M:%S')
+        end_date_str = self.end_date.strftime('%Y-%m-%d %H:%M:%S')
+        
         query = """
         SELECT 
             id,
@@ -317,11 +350,11 @@ class Command(BaseCommand):
             order_status,
             time
         FROM cli_cartflows_ca_cart_abandonment
-        WHERE time >= DATE_SUB(NOW(), INTERVAL 90 DAY)
+        WHERE time BETWEEN %s AND %s
         ORDER BY time DESC
         """
         
-        cursor.execute(query)
+        cursor.execute(query, (start_date_str, end_date_str))
         carts = cursor.fetchall()
         
         self.stdout.write(f'📦 Processando {len(carts)} carrinhos...')
@@ -451,6 +484,10 @@ class Command(BaseCommand):
     def import_orders(self, cursor):
         """Importa pedidos e vincula com carrinhos"""
         
+        # Formatar datas para MySQL
+        start_date_str = self.start_date.strftime('%Y-%m-%d %H:%M:%S')
+        end_date_str = self.end_date.strftime('%Y-%m-%d %H:%M:%S')
+
         # Descobrir prefixo das tabelas
         cursor.execute("SHOW TABLES LIKE '%posts'")
         tables = cursor.fetchall()
@@ -488,10 +525,10 @@ class Command(BaseCommand):
         AND p.post_date >= DATE_SUB(NOW(), INTERVAL 365 DAY)
         """
         
-        cursor.execute(query)
+        cursor.execute(query, (start_date_str, end_date_str))
         orders = cursor.fetchall()
         
-        self.stdout.write(f'🛍️ Processando {len(orders)} pedidos...')
+        self.stdout.write(f'🛍️ Processando {len(orders)} pedidos do período selecionado...')
         
         success_count = 0
         for order_data in orders:
@@ -869,3 +906,23 @@ class Command(BaseCommand):
                 self.stdout.write(f'❌ Erro ao atualizar {email}: {e}')
         
         self.stdout.write(f'✅ {updated_count} clientes atualizados com dados dos pedidos')
+
+    def add_arguments(self, parser):
+        parser.add_argument(
+            '--start_date',
+            type=str,
+            help='Data inicial (YYYY-MM-DD)',
+        )
+        parser.add_argument(
+            '--end_date',
+            type=str,
+            help='Data final (YYYY-MM-DD)',
+        )
+        parser.add_argument(
+            '--import_type',
+            type=str,
+            default='all',
+            choices=['all', 'carts', 'orders'],
+            help='Tipo de importação',
+        )
+

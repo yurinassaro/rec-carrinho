@@ -26,6 +26,7 @@ router.register(r'customers', CustomerViewSet)
 # ERRADO - router não foi criado
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('importer/', include('importer.urls')),  # Sem o /admin/ prefix
     path('api/', include(router.urls)),  # ← router não existe ainda!
 ]
 
