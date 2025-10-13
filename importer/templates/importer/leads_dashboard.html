@@ -1,0 +1,238 @@
+<!-- importer/templates/importer/leads_dashboard.html -->
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block title %}Form Vibes - Gestão de Leads{% endblock %}
+
+{% block content %}
+<style>
+    .leads-dashboard {
+        padding: 20px;
+        max-width: 1400px;
+        margin: 0 auto;
+    }
+    
+    .filter-section {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+    }
+    
+    .date-filters {
+        display: flex;
+        gap: 15px;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+    
+    .quick-filter-btn {
+        padding: 8px 16px;
+        background: #f0f0f0;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+    
+    .quick-filter-btn.active {
+        background: #2196F3;
+        color: white;
+    }
+    
+    .import-btn {
+        background: #4CAF50;
+        color: white;
+        padding: 12px 30px;
+        border: none;
+        border-radius: 4px;
+        font-size: 16px;
+        cursor: pointer;
+    }
+    
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 20px;
+    }
+    
+    .stat-card {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        text-align: center;
+    }
+    
+    .shoe-filters {
+        background: white;
+        padding: 15px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+    }
+    
+    .shoe-size-btn {
+        padding: 5px 10px;
+        margin: 2px;
+        border: 1px solid #ddd;
+        background: white;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+    
+    .shoe-size-btn.active {
+        background: #FF9800;
+        color: white;
+    }
+</style>
+
+<div class="leads-dashboard">
+    <h1>📋 Form Vibes - Gestão de Leads</h1>
+    
+    <div class="filter-section">
+        <h2>Filtros de Importação</h2>
+        
+        <div class="date-filters">
+            <div>
+                <label>Data Inicial:</label>
+                <input type="date" id="start_date" value="{{ start_date }}">
+            </div>
+            <div>
+                <label>Data Final:</label>
+                <input type="date" id="end_date" value="{{ end_date }}">
+            </div>
+        </div>
+        
+        <div style="margin: 15px 0;">
+            <button class="quick-filter-btn" onclick="setQuickFilter('ontem')">Ontem</button>
+            <button class="quick-filter-btn" onclick="setQuickFilter('7dias')">Últimos 7 dias</button>
+            <button class="quick-filter-btn active" onclick="setQuickFilter('30dias')">Últimos 30 dias</button>
+            <button class="quick-filter-btn" onclick="setQuickFilter('mes_atual')">Mês Atual</button>
+        </div>
+        
+        <button class="import-btn" onclick="importLeads()">
+            📥 Importar Leads
+        </button>
+    </div>
+    
+    <div class="shoe-filters">
+        <h3>Filtrar por Número do Sapato:</h3>
+        <button class="shoe-size-btn" onclick="filterBySize('all')">Todos</button>
+        {% for size in "33,34,35,36,37,38,39,40,41,42,43,44,45"|make_list %}
+            <button class="shoe-size-btn" onclick="filterBySize('{{ size }}')">{{ size }}</button>
+        {% endfor %}
+    </div>
+    
+    <div class="stats-grid">
+        <div class="stat-card">
+            <h3>Total de Leads</h3>
+            <div id="total-leads">-</div>
+        </div>
+        <div class="stat-card">
+            <h3>Já São Clientes</h3>
+            <div id="existing-customers">-</div>
+        </div>
+        <div class="stat-card">
+            <h3>Novos Prospects</h3>
+            <div id="new-prospects">-</div>
+        </div>
+        <div class="stat-card">
+            <h3>Taxa de Conversão</h3>
+            <div id="conversion-rate">-</div>
+        </div>
+    </div>
+</div>
+
+<script>
+function setQuickFilter(periodo) {
+    const today = new Date();
+    let startDate, endDate = today;
+    
+    document.querySelectorAll('.quick-filter-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    event.target.classList.add('active');
+    
+    switch(periodo) {
+        case 'ontem':
+            startDate = new Date(today);
+            startDate.setDate(today.getDate() - 1);
+            endDate = startDate;
+            break;
+        case '7dias':
+            startDate = new Date(today);
+            startDate.setDate(today.getDate() - 7);
+            break;
+        case '30dias':
+            startDate = new Date(today);
+            startDate.setDate(today.getDate() - 30);
+            break;
+        case 'mes_atual':
+            startDate = new Date(today.getFullYear(), today.getMonth(), 1);
+            break;
+    }
+    
+    document.getElementById('start_date').value = formatDate(startDate);
+    document.getElementById('end_date').value = formatDate(endDate);
+}
+
+function formatDate(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function importLeads() {
+    const startDate = document.getElementById('start_date').value;
+    const endDate = document.getElementById('end_date').value;
+    
+    fetch('/importer/import-leads/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({
+            start_date: startDate,
+            end_date: endDate
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('Importação concluída!');
+            loadStats();
+        }
+    });
+}
+
+function loadStats() {
+    // Carregar estatísticas
+    fetch('/importer/leads-stats/')
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('total-leads').textContent = data.total;
+            document.getElementById('existing-customers').textContent = data.customers;
+            document.getElementById('new-prospects').textContent = data.prospects;
+            document.getElementById('conversion-rate').textContent = data.conversion_rate + '%';
+        });
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Carregar estatísticas ao iniciar
+document.addEventListener('DOMContentLoaded', loadStats);
+</script>
+{% endblock %}

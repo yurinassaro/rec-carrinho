@@ -81,21 +81,22 @@ class Command(BaseCommand):
             with conn.cursor() as cursor:
                 # Executar importações baseado no tipo selecionado
                 if import_type in ['all', 'carts']:
+                    # 1. Importar clientes e carrinhos
                     self.import_abandoned_carts(cursor)
                 
                 if import_type in ['all', 'orders']:
+                    # 2. Importar pedidos
                     self.import_orders(cursor)
+                    
+                    # 3. Enriquecer dados com informações dos pedidos
                     self.enrich_customer_data_from_orders(cursor)
                 
-                # Enriquecer dados
+                # 4. Enriquecer dados com informações do WordPress users (sempre executar)
                 self.enrich_customer_phone_data(cursor)
                 
-                # Análise inteligente
+                # 5. Análise inteligente (sempre executar)
                 self.analyze_customers()
                 
-                # NOVA VERIFICAÇÃO DE RECUPERAÇÃO
-                self.check_and_update_recovered_carts()  # <-- ADICIONAR AQUI
-            
             conn.close()
 
         self.stdout.write(self.style.SUCCESS('\n✅ Importação concluída com sucesso!'))
@@ -1058,8 +1059,6 @@ class Command(BaseCommand):
         
         self.stdout.write(f'✅ {updated_count} clientes atualizados com dados dos pedidos')
 
-    
-    
     def add_arguments(self, parser):
         parser.add_argument(
             '--start_date',
@@ -1078,111 +1077,4 @@ class Command(BaseCommand):
             choices=['all', 'carts', 'orders'],
             help='Tipo de importação',
         )
-        parser.add_argument(
-            '--check_recovery', 
-            action='store_true', 
-            help='Forçar verificação de recuperação'
-        )
 
-    def check_and_update_recovered_carts(self):
-        """
-        Função: check_and_update_recovered_carts
-        Descrição: Verifica carrinhos abandonados e marca como recuperados se houve compra em 30 dias
-        Lógica: 
-            - Carrinho + Pedido em até 30 dias = RECUPERADO
-            - Carrinho + 30 dias sem pedido = PERMANECE ABANDONADO
-            - Atualiza automaticamente durante importação
-        """
-        
-        self.stdout.write('\n🔄 Verificando recuperação de carrinhos abandonados...')
-        
-        from django.db.models import Q
-        from datetime import timedelta
-        
-        # Buscar todos os carrinhos com status abandoned
-        abandoned_carts = Cart.objects.filter(
-            Q(status='abandoned') | Q(status='active'),
-            was_recovered=False
-        )
-        
-        self.stdout.write(f'  📦 Analisando {abandoned_carts.count()} carrinhos...')
-        
-        recovered_count = 0
-        still_abandoned = 0
-        waiting_count = 0
-        
-        for cart in abandoned_carts:
-            # Janela de 30 dias para recuperação
-            window_end = cart.created_at + timedelta(days=30)
-            
-            # Buscar pedido do cliente após o carrinho
-            recovery_order = Order.objects.filter(
-                customer=cart.customer,
-                created_at__gt=cart.created_at,
-                created_at__lte=window_end,
-                status__in=['wc-completed', 'wc-processing', 'wc-on-hold']
-            ).order_by('created_at').first()
-            
-            if recovery_order:
-                # RECUPERADO!
-                days_to_recover = (recovery_order.created_at - cart.created_at).days
-                
-                cart.status = 'recovered'
-                cart.was_recovered = True
-                cart.recovered_order = recovery_order
-                cart.recovered_at = recovery_order.created_at
-                cart.recovery_value = recovery_order.total
-                cart.save()
-                
-                recovered_count += 1
-                
-                # Se recuperou, atualizar status do cliente
-                if cart.customer.status == 'abandoned_only':
-                    cart.customer.status = 'first_time'
-                    cart.customer.save()
-                
-                self.stdout.write(
-                    self.style.SUCCESS(
-                        f'    ✅ {cart.customer.email}: Recuperado em {days_to_recover} dias'
-                    )
-                )
-            
-            elif timezone.now() > window_end:
-                # Passou de 30 dias - definitivamente abandonado
-                cart.status = 'abandoned'
-                cart.was_recovered = False
-                cart.save()
-                still_abandoned += 1
-                
-            else:
-                # Ainda dentro da janela de 30 dias
-                days_remaining = (window_end - timezone.now()).days
-                waiting_count += 1
-                if days_remaining <= 7:  # Mostrar apenas os próximos a vencer
-                    self.stdout.write(
-                        f'    ⏳ {cart.customer.email}: {days_remaining} dias restantes'
-                    )
-        
-        # Estatísticas
-        self.stdout.write(
-            self.style.SUCCESS(
-                f'\n📊 Resultado da Verificação:\n'
-                f'  ✅ Recuperados: {recovered_count}\n'
-                f'  ❌ Abandonados definitivos: {still_abandoned}\n'
-                f'  ⏳ Aguardando (dentro de 30 dias): {waiting_count}'
-            )
-        )
-        
-        # Taxa de recuperação
-        total_finalizados = recovered_count + still_abandoned
-        if total_finalizados > 0:
-            taxa = (recovered_count / total_finalizados) * 100
-            self.stdout.write(f'  📈 Taxa de recuperação: {taxa:.1f}%')
-            
-            # Valor recuperado
-            from django.db.models import Sum
-            valor_recuperado = Cart.objects.filter(
-                was_recovered=True
-            ).aggregate(Sum('recovery_value'))['recovery_value__sum'] or 0
-            
-            self.stdout.write(f'  💰 Valor total recuperado: R$ {valor_recuperado:,.2f}')

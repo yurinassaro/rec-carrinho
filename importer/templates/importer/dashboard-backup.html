@@ -1,0 +1,242 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block title %}Importação e Análise Inteligente{% endblock %}
+
+{% block extrastyle %}
+<style>
+    .import-dashboard {
+        padding: 20px;
+        max-width: 1400px;
+        margin: 0 auto;
+    }
+    
+    .filter-section {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-bottom: 20px;
+    }
+    
+    .date-filters {
+        display: flex;
+        gap: 15px;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+    
+    .date-filters > div {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+    }
+    
+    .date-filters label {
+        font-weight: bold;
+        color: #333;
+    }
+    
+    .date-filters input, .date-filters select {
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+    }
+    
+    .quick-filters {
+        display: flex;
+        gap: 10px;
+        margin: 15px 0;
+    }
+    
+    .quick-filter-btn {
+        padding: 8px 16px;
+        background: #f0f0f0;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+    
+    .quick-filter-btn:hover {
+        background: #e0e0e0;
+    }
+    
+    .quick-filter-btn.active {
+        background: #79aec8;
+        color: white;
+        border-color: #79aec8;
+    }
+    
+    .import-btn {
+        background: #28a745;
+        color: white;
+        padding: 12px 30px;
+        border: none;
+        border-radius: 4px;
+        font-size: 16px;
+        cursor: pointer;
+        margin-top: 20px;
+    }
+    
+    .import-btn:hover {
+        background: #218838;
+    }
+    
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 20px;
+        margin-top: 30px;
+    }
+    
+    .stat-card {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        text-align: center;
+    }
+    
+    .stat-card h3 {
+        margin: 0 0 10px 0;
+        color: #666;
+        font-size: 14px;
+        text-transform: uppercase;
+    }
+    
+    .stat-value {
+        font-size: 32px;
+        font-weight: bold;
+        color: #333;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="import-dashboard">
+    <h1>🚀 Importação e Análise Inteligente</h1>
+    
+    <div class="filter-section">
+        <h2>Filtros de Importação</h2>
+        
+        <div class="date-filters">
+            <div>
+                <label for="start_date">Data Inicial:</label>
+                <input type="date" id="start_date" value="{{ start_date }}">
+            </div>
+            <div>
+                <label for="end_date">Data Final:</label>
+                <input type="date" id="end_date" value="{{ end_date }}">
+            </div>
+            <div>
+                <label for="import_type">Tipo:</label>
+                <select id="import_type">
+                    <option value="all">Completa</option>
+                    <option value="carts">Apenas Carrinhos</option>
+                    <option value="orders">Apenas Pedidos</option>
+                </select>
+            </div>
+        </div>
+        
+        <div class="quick-filters">
+            <button class="quick-filter-btn" onclick="setQuickFilter('yesterday')">Ontem</button>
+            <button class="quick-filter-btn" onclick="setQuickFilter('last7days')">Últimos 7 dias</button>
+            <button class="quick-filter-btn active" onclick="setQuickFilter('last30days')">Últimos 30 dias</button>
+            <button class="quick-filter-btn" onclick="setQuickFilter('thisMonth')">Mês Atual</button>
+        </div>
+        
+        <button class="import-btn" onclick="startImport()">
+            🚀 Iniciar Importação
+        </button>
+    </div>
+    
+    <div class="stats-grid">
+        <div class="stat-card">
+            <h3>Total de Clientes</h3>
+            <div class="stat-value" id="total-customers">-</div>
+        </div>
+        <div class="stat-card">
+            <h3>Com Telefone</h3>
+            <div class="stat-value" id="customers-phone">-</div>
+        </div>
+        <div class="stat-card">
+            <h3>Carrinhos Abandonados</h3>
+            <div class="stat-value" id="abandoned-carts">-</div>
+        </div>
+        <div class="stat-card">
+            <h3>Total de Pedidos</h3>
+            <div class="stat-value" id="total-orders">-</div>
+        </div>
+    </div>
+</div>
+
+<script>
+function setQuickFilter(filter) {
+    const today = new Date();
+    let startDate, endDate = today;
+    
+    document.querySelectorAll('.quick-filter-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    event.target.classList.add('active');
+    
+    switch(filter) {
+        case 'yesterday':
+            startDate = new Date(today);
+            startDate.setDate(today.getDate() - 1);
+            endDate = startDate;
+            break;
+        case 'last7days':
+            startDate = new Date(today);
+            startDate.setDate(today.getDate() - 7);
+            break;
+        case 'last30days':
+            startDate = new Date(today);
+            startDate.setDate(today.getDate() - 30);
+            break;
+        case 'thisMonth':
+            startDate = new Date(today.getFullYear(), today.getMonth(), 1);
+            break;
+    }
+    
+    document.getElementById('start_date').value = formatDate(startDate);
+    document.getElementById('end_date').value = formatDate(endDate);
+}
+
+function formatDate(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+async function startImport() {
+    const startDate = document.getElementById('start_date').value;
+    const endDate = document.getElementById('end_date').value;
+    const importType = document.getElementById('import_type').value;
+    
+    if (!startDate || !endDate) {
+        alert('Por favor, selecione as datas!');
+        return;
+    }
+    
+    alert(`Importação iniciada!\n\nPeríodo: ${startDate} até ${endDate}\nTipo: ${importType}\n\nIsso pode levar alguns minutos...`);
+    
+    // Aqui você faria a chamada AJAX real
+    // Por enquanto vamos simular
+    loadStats();
+}
+
+async function loadStats() {
+    // Simular carregamento de estatísticas
+    document.getElementById('total-customers').textContent = '1,245';
+    document.getElementById('customers-phone').textContent = '843';
+    document.getElementById('abandoned-carts').textContent = '327';
+    document.getElementById('total-orders').textContent = '2,156';
+}
+
+// Carregar estatísticas ao iniciar
+document.addEventListener('DOMContentLoaded', loadStats);
+</script>
+{% endblock %}

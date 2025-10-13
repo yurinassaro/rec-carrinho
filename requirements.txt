@@ -101,6 +101,7 @@ faker==22.2.0  # Dados fake para testes
 # ========================================
 # Para tratamento dos dados vindos serializados do PHP
 phpserialize==1.3.0
+
 # ========================================
 # Timezone e Localização
 # ========================================

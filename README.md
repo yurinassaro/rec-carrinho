@@ -19,3 +19,25 @@ python manage.py import_customers
 
 # 3. Se ainda houver erros, verificar os logs detalhados
 python manage.py import_customers --verbosity=2
+
+EXCLUIR TODA BASE E RECUPERAR NOVAMENTE
+# Ou se quiser limpar e reimportar tudo:
+python manage.py shell
+>>> from customers.models import Customer, Cart, Order
+>>> Cart.objects.all().delete()
+>>> Order.objects.all().delete()
+>>> Customer.objects.all().delete()
+>>> exit()
+python manage.py import_customers
+
+
+# como usar
+Importação inicial (histórico completo):
+bash# Importar 2 anos de dados
+python manage.py import_customers --start_date=2023-09-01 --end_date=2025-09-28 --import_type=all
+Atualizações diárias:
+bash# Importar últimos 7 dias
+python manage.py import_customers --start_date=2025-09-22 --end_date=2025-09-28 --import_type=all
+Apenas verificar recuperações:
+bash# Só rodar análise de recuperação
+python manage.py import_customers --import_type=orders --check_recovery

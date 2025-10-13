@@ -172,12 +172,28 @@ class Cart(models.Model):
     items_count = models.IntegerField(default=0)
     created_at = models.DateTimeField()
     abandoned_at = models.DateTimeField(null=True, blank=True)
-    recovered_at = models.DateTimeField(null=True, blank=True)
     
-    # Rastreamento
+    # ❌ REMOVER recovered_at DUPLICADO (está repetido abaixo)
+    # recovered_at = models.DateTimeField(null=True, blank=True)
+    
+    # Rastreamento de recuperação (CAMPOS ÚNICOS)
     recovery_email_sent = models.BooleanField(default=False)
+    recovery_email_date = models.DateTimeField(null=True, blank=True)
     recovery_whatsapp_sent = models.BooleanField(default=False)
-    coupon_used = models.CharField(max_length=50, null=True, blank=True)
+    recovery_whatsapp_date = models.DateTimeField(null=True, blank=True)
+    recovery_attempts = models.IntegerField(default=0)
+    recovery_coupon = models.CharField(max_length=50, null=True, blank=True)
+    
+    # ❌ REMOVER coupon_used (já temos recovery_coupon)
+    # coupon_used = models.CharField(max_length=50, null=True, blank=True)
+    
+    # Se foi recuperado
+    was_recovered = models.BooleanField(default=False)
+    recovered_order = models.ForeignKey('Order', null=True, blank=True,
+                                       on_delete=models.SET_NULL,
+                                       related_name='recovered_from_cart')
+    recovered_at = models.DateTimeField(null=True, blank=True)
+    recovery_value = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     
     class Meta:
         db_table = 'carts'

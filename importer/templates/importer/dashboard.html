@@ -77,12 +77,172 @@
         font-size: 16px;
         cursor: pointer;
         margin-top: 20px;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
     }
     
-    .import-btn:hover {
+    .import-btn:hover:not(:disabled) {
         background: #218838;
     }
     
+    .import-btn:disabled {
+        background: #6c757d;
+        cursor: not-allowed;
+        opacity: 0.6;
+    }
+    
+    /* Progress Section */
+    .progress-section {
+        display: none;
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin: 20px 0;
+    }
+    
+    .progress-section.active {
+        display: block;
+    }
+    
+    .progress-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+    }
+    
+    .progress-title {
+        font-size: 18px;
+        font-weight: bold;
+        color: #333;
+    }
+    
+    .progress-percentage {
+        font-size: 24px;
+        font-weight: bold;
+        color: #28a745;
+    }
+    
+    .progress-bar-container {
+        background: #f0f0f0;
+        border-radius: 10px;
+        height: 30px;
+        overflow: hidden;
+        position: relative;
+        margin-bottom: 15px;
+    }
+    
+    .progress-bar {
+        background: linear-gradient(90deg, #28a745, #20c997);
+        height: 100%;
+        width: 0%;
+        transition: width 0.5s ease;
+        border-radius: 10px;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .progress-bar::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: linear-gradient(
+            90deg,
+            transparent,
+            rgba(255,255,255,0.3),
+            transparent
+        );
+        animation: shimmer 2s infinite;
+    }
+    
+    @keyframes shimmer {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(100%); }
+    }
+    
+    .progress-message {
+        color: #666;
+        font-size: 14px;
+        margin: 10px 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .progress-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 15px;
+        margin-top: 20px;
+        padding-top: 20px;
+        border-top: 1px solid #e0e0e0;
+    }
+    
+    .progress-stat {
+        text-align: center;
+    }
+    
+    .progress-stat-label {
+        color: #666;
+        font-size: 12px;
+        text-transform: uppercase;
+        margin-bottom: 5px;
+    }
+    
+    .progress-stat-value {
+        color: #28a745;
+        font-size: 24px;
+        font-weight: bold;
+    }
+    
+    /* Result Section */
+    .result-section {
+        display: none;
+        background: #d4edda;
+        border: 1px solid #c3e6cb;
+        padding: 20px;
+        border-radius: 8px;
+        margin: 20px 0;
+    }
+    
+    .result-section.active {
+        display: block;
+    }
+    
+    .result-section.error {
+        background: #f8d7da;
+        border-color: #f5c6cb;
+    }
+    
+    .result-title {
+        font-size: 18px;
+        font-weight: bold;
+        color: #155724;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .result-section.error .result-title {
+        color: #721c24;
+    }
+    
+    .result-message {
+        color: #155724;
+        margin-bottom: 15px;
+    }
+    
+    .result-section.error .result-message {
+        color: #721c24;
+    }
+    
+    /* Stats Grid */
     .stats-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -109,6 +269,52 @@
         font-size: 32px;
         font-weight: bold;
         color: #333;
+    }
+    
+    .stat-change {
+        color: #28a745;
+        font-size: 14px;
+        margin-top: 5px;
+    }
+    
+    /* Loading spinner */
+    .spinner {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        border: 3px solid #f3f3f3;
+        border-top: 3px solid #28a745;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+    }
+
+    .check-recovery-btn {
+        background: #17a2b8;
+        color: white;
+        padding: 12px 30px;
+        border: none;
+        border-radius: 4px;
+        font-size: 16px;
+        cursor: pointer;
+        margin-left: 10px;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .check-recovery-btn:hover:not(:disabled) {
+        background: #138496;
+    }
+
+    .check-recovery-btn:disabled {
+        background: #6c757d;
+        cursor: not-allowed;
+        opacity: 0.6;
+    }
+    
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
     }
 </style>
 {% endblock %}
@@ -146,39 +352,107 @@
             <button class="quick-filter-btn" onclick="setQuickFilter('thisMonth')">Mês Atual</button>
         </div>
         
-        <button class="import-btn" onclick="startImport()">
-            🚀 Iniciar Importação
+        <button class="import-btn" id="importBtn" onclick="startImport()">
+            <span id="btnIcon">🚀</span>
+            <span id="btnText">Iniciar Importação</span>
+        </button>
+        <!-- Após o botão Iniciar Importação, adicione: -->
+        <button class="check-recovery-btn" id="btnCheckRecovery" onclick="checkRecovery()">
+            <span>🔄</span>
+            <span>Verificar Recuperações</span>
         </button>
     </div>
     
+    <!-- Progress Section -->
+    <div class="progress-section" id="progressSection">
+        <div class="progress-header">
+            <div class="progress-title">
+                <span class="spinner"></span>
+                <span>Importação em Andamento</span>
+            </div>
+            <div class="progress-percentage" id="progressPercentage">0%</div>
+        </div>
+        
+        <div class="progress-bar-container">
+            <div class="progress-bar" id="progressBar"></div>
+        </div>
+        
+        <div class="progress-message" id="progressMessage">
+            Preparando importação...
+        </div>
+        
+        <div class="progress-stats" id="progressStats">
+            <div class="progress-stat">
+                <div class="progress-stat-label">Processados</div>
+                <div class="progress-stat-value" id="currentCount">0</div>
+            </div>
+            <div class="progress-stat">
+                <div class="progress-stat-label">Total</div>
+                <div class="progress-stat-value" id="totalCount">0</div>
+            </div>
+            <div class="progress-stat">
+                <div class="progress-stat-label">Status</div>
+                <div class="progress-stat-value" id="statusText">Iniciando</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Result Section -->
+    <div class="result-section" id="resultSection">
+        <div class="result-title" id="resultTitle">
+            <span id="resultIcon">✅</span>
+            <span>Importação Concluída!</span>
+        </div>
+        <div class="result-message" id="resultMessage">
+            <!-- Mensagem será preenchida dinamicamente -->
+        </div>
+        <div class="progress-stats" id="resultStats">
+            <!-- Estatísticas finais serão preenchidas aqui -->
+        </div>
+    </div>
+    
+    <!-- Stats Grid -->
     <div class="stats-grid">
         <div class="stat-card">
             <h3>Total de Clientes</h3>
             <div class="stat-value" id="total-customers">-</div>
+            <div class="stat-change" id="customers-change"></div>
         </div>
         <div class="stat-card">
             <h3>Com Telefone</h3>
             <div class="stat-value" id="customers-phone">-</div>
+            <div class="stat-change" id="phone-change"></div>
         </div>
         <div class="stat-card">
             <h3>Carrinhos Abandonados</h3>
             <div class="stat-value" id="abandoned-carts">-</div>
+            <div class="stat-change" id="carts-change"></div>
         </div>
         <div class="stat-card">
             <h3>Total de Pedidos</h3>
             <div class="stat-value" id="total-orders">-</div>
+            <div class="stat-change" id="orders-change"></div>
         </div>
     </div>
 </div>
 
 <script>
+// Variáveis globais
+let currentTaskId = null;
+let progressInterval = null;
+let initialStats = {};
+
+// Função para definir filtros rápidos
 function setQuickFilter(filter) {
     const today = new Date();
     let startDate, endDate = today;
     
+    // Remover classe active de todos
     document.querySelectorAll('.quick-filter-btn').forEach(btn => {
         btn.classList.remove('active');
     });
+    
+    // Adicionar active ao botão clicado
     event.target.classList.add('active');
     
     switch(filter) {
@@ -204,6 +478,7 @@ function setQuickFilter(filter) {
     document.getElementById('end_date').value = formatDate(endDate);
 }
 
+// Formatar data para YYYY-MM-DD
 function formatDate(date) {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -211,6 +486,7 @@ function formatDate(date) {
     return `${year}-${month}-${day}`;
 }
 
+// Iniciar importação
 async function startImport() {
     const startDate = document.getElementById('start_date').value;
     const endDate = document.getElementById('end_date').value;
@@ -221,22 +497,251 @@ async function startImport() {
         return;
     }
     
-    alert(`Importação iniciada!\n\nPeríodo: ${startDate} até ${endDate}\nTipo: ${importType}\n\nIsso pode levar alguns minutos...`);
+    // Desabilitar botão
+    const btn = document.getElementById('importBtn');
+    btn.disabled = true;
     
-    // Aqui você faria a chamada AJAX real
-    // Por enquanto vamos simular
-    loadStats();
+    // Guardar estatísticas iniciais
+    await loadStats(true);
+    
+    // Mostrar seção de progresso
+    document.getElementById('progressSection').classList.add('active');
+    document.getElementById('resultSection').classList.remove('active');
+    
+    // Resetar progresso
+    updateProgress(0, 'Iniciando importação...');
+    
+    try {
+        // Fazer requisição POST
+        const response = await fetch('{% url "importer:import_data" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                start_date: startDate,
+                end_date: endDate,
+                import_type: importType
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success && data.task_id) {
+            currentTaskId = data.task_id;
+            
+            // Iniciar polling do progresso
+            progressInterval = setInterval(() => {
+                checkProgress(data.task_id);
+            }, 1000); // Verificar a cada 1 segundo
+        } else {
+            throw new Error(data.message || 'Erro ao iniciar importação');
+        }
+        
+    } catch (error) {
+        console.error('Erro:', error);
+        showError(`Erro ao iniciar importação: ${error.message}`);
+        btn.disabled = false;
+    }
 }
 
-async function loadStats() {
-    // Simular carregamento de estatísticas
-    document.getElementById('total-customers').textContent = '1,245';
-    document.getElementById('customers-phone').textContent = '843';
-    document.getElementById('abandoned-carts').textContent = '327';
-    document.getElementById('total-orders').textContent = '2,156';
+// Verificar progresso
+async function checkProgress(taskId) {
+    try {
+        const response = await fetch(`{% url "importer:import_status" %}?task_id=${taskId}`);
+        const data = await response.json();
+        
+        if (!data || data.status === 'not_found') {
+            clearInterval(progressInterval);
+            showError('Tarefa de importação não encontrada');
+            return;
+        }
+        
+        // Atualizar barra de progresso
+        const progress = data.progress || 0;
+        const message = data.message || 'Processando...';
+        
+        updateProgress(progress, message);
+        
+        // Atualizar contadores
+        if (data.current) {
+            document.getElementById('currentCount').textContent = data.current.toLocaleString('pt-BR');
+        }
+        if (data.total) {
+            document.getElementById('totalCount').textContent = data.total.toLocaleString('pt-BR');
+        }
+        
+        // Atualizar status
+        const statusMap = {
+            'iniciando': 'Iniciando',
+            'conectando': 'Conectando',
+            'processando': 'Processando',
+            'analisando': 'Analisando',
+            'finalizando': 'Finalizando',
+            'concluido': 'Concluído',
+            'erro': 'Erro'
+        };
+        document.getElementById('statusText').textContent = statusMap[data.status] || data.status;
+        
+        // Se concluído ou erro
+        if (data.status === 'concluido' || data.status === 'erro') {
+            clearInterval(progressInterval);
+            
+            if (data.status === 'concluido') {
+                showSuccess(data);
+            } else {
+                showError(data.message || 'Erro durante a importação');
+            }
+            
+            // Reabilitar botão
+            document.getElementById('importBtn').disabled = false;
+            
+            // Recarregar estatísticas
+            setTimeout(() => loadStats(false), 1000);
+        }
+        
+    } catch (error) {
+        console.error('Erro ao verificar progresso:', error);
+    }
+}
+
+function checkRecovery() {
+    const btn = document.getElementById('btnCheckRecovery');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Verificando...';
+    
+    // URL direta em vez de template tag
+    fetch('/importer/check-recovery/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({})
+    })
+    .then(response => response.json())
+    .then(data => {
+        if(data.success) {
+            alert('Verificação concluída!\n\n' +
+                  '✅ Recuperados: ' + data.recovered + '\n' +
+                  '❌ Abandonados: ' + data.abandoned + '\n' +
+                  '⏳ Aguardando: ' + data.waiting + '\n' +
+                  '📈 Taxa: ' + data.rate + '%');
+        }
+        btn.disabled = false;
+        btn.innerHTML = '<span>🔄</span> Verificar Recuperações';
+        loadStats(); // Recarregar estatísticas
+    })
+    .catch(error => {
+        console.error('Erro:', error);
+        alert('Erro ao verificar recuperações');
+        btn.disabled = false;
+        btn.innerHTML = '<span>🔄</span> Verificar Recuperações';
+    });
+}
+
+// Atualizar barra de progresso
+function updateProgress(percentage, message) {
+    document.getElementById('progressBar').style.width = percentage + '%';
+    document.getElementById('progressPercentage').textContent = percentage + '%';
+    document.getElementById('progressMessage').textContent = message;
+}
+
+// Mostrar sucesso
+function showSuccess(data) {
+    const resultSection = document.getElementById('resultSection');
+    resultSection.classList.add('active');
+    resultSection.classList.remove('error');
+    
+    document.getElementById('resultIcon').textContent = '✅';
+    document.getElementById('resultTitle').innerHTML = '<span>✅</span> Importação Concluída com Sucesso!';
+    document.getElementById('resultMessage').textContent = data.message || 'Todos os dados foram importados com sucesso.';
+    
+    // Esconder progresso após 2 segundos
+    setTimeout(() => {
+        document.getElementById('progressSection').classList.remove('active');
+    }, 2000);
+}
+
+// Mostrar erro
+function showError(message) {
+    const resultSection = document.getElementById('resultSection');
+    resultSection.classList.add('active');
+    resultSection.classList.add('error');
+    
+    document.getElementById('resultIcon').textContent = '❌';
+    document.getElementById('resultTitle').innerHTML = '<span>❌</span> Erro na Importação';
+    document.getElementById('resultMessage').textContent = message;
+    
+    document.getElementById('progressSection').classList.remove('active');
+}
+
+// Carregar estatísticas
+async function loadStats(saveInitial = false) {
+    try {
+        const response = await fetch('{% url "importer:import_status" %}');
+        const stats = await response.json();
+        
+        if (saveInitial) {
+            initialStats = { ...stats };
+        }
+        
+        // Atualizar valores
+        document.getElementById('total-customers').textContent = 
+            (stats.total_customers || 0).toLocaleString('pt-BR');
+        document.getElementById('customers-phone').textContent = 
+            (stats.customers_with_phone || 0).toLocaleString('pt-BR');
+        document.getElementById('abandoned-carts').textContent = 
+            (stats.abandoned_carts || 0).toLocaleString('pt-BR');
+        document.getElementById('total-orders').textContent = 
+            (stats.total_orders || 0).toLocaleString('pt-BR');
+        
+        // Mostrar mudanças se tiver valores iniciais
+        if (!saveInitial && initialStats.total_customers !== undefined) {
+            const customersDiff = stats.total_customers - initialStats.total_customers;
+            const phoneDiff = stats.customers_with_phone - initialStats.customers_with_phone;
+            const cartsDiff = stats.abandoned_carts - initialStats.abandoned_carts;
+            const ordersDiff = stats.total_orders - initialStats.total_orders;
+            
+            if (customersDiff > 0) {
+                document.getElementById('customers-change').textContent = `+${customersDiff} novos`;
+            }
+            if (phoneDiff > 0) {
+                document.getElementById('phone-change').textContent = `+${phoneDiff} novos`;
+            }
+            if (cartsDiff > 0) {
+                document.getElementById('carts-change').textContent = `+${cartsDiff} novos`;
+            }
+            if (ordersDiff > 0) {
+                document.getElementById('orders-change').textContent = `+${ordersDiff} novos`;
+            }
+        }
+        
+    } catch (error) {
+        console.error('Erro ao carregar estatísticas:', error);
+    }
+}
+
+// Obter cookie CSRF
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
 }
 
 // Carregar estatísticas ao iniciar
-document.addEventListener('DOMContentLoaded', loadStats);
+document.addEventListener('DOMContentLoaded', () => {
+    loadStats();
+});
 </script>
 {% endblock %}
