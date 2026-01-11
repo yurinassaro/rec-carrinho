@@ -10,227 +10,69 @@ from django.contrib.admin.views.decorators import staff_member_required
 from django.utils.decorators import method_decorator
 from django.core.cache import cache
 import json
-import threading
 import uuid
-from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from customers.models import Customer, Cart, Order
+
 
 @method_decorator(staff_member_required, name='dispatch')
 class ImportDashboardView(View):
     """
-    # Classe: ImportDashboardView
-    # Descrição: View principal do dashboard de importação
-    # Métodos:
-    #   - get: Renderiza o dashboard
-    #   - post: Inicia processo de importação
+    View principal do dashboard de importação.
+    Usa Celery para processar importações em background.
     """
-    
+
     def get(self, request):
-        """
-        # Método: get
-        # Descrição: Renderiza o dashboard com datas padrão
-        # Parâmetros:
-        #   - request (HttpRequest): requisição HTTP
-        # Retorno:
-        #   - HttpResponse: template renderizado
-        """
-        # Definir datas padrão (últimos 30 dias até hoje)
+        """Renderiza o dashboard com datas padrão"""
         end_date = timezone.now().date()
         start_date = end_date - timedelta(days=30)
-        
+
         context = {
             'start_date': start_date.strftime('%Y-%m-%d'),
             'end_date': end_date.strftime('%Y-%m-%d'),
             'page_title': 'Importação e Análise Inteligente',
         }
-        
+
         return render(request, 'importer/dashboard.html', context)
-    
+
     def post(self, request):
-        """
-        # Método: post
-        # Descrição: Inicia importação em thread separada com progresso
-        # Parâmetros:
-        #   - request (HttpRequest): contém start_date, end_date, import_type
-        # Retorno:
-        #   - JsonResponse: task_id para acompanhamento
-        """
+        """Inicia importação via Celery task"""
+        from importer.tasks import import_customers_task
+
         data = json.loads(request.body)
         start_date = data.get('start_date')
         end_date = data.get('end_date')
         import_type = data.get('import_type', 'all')
-        
+
+        # Obter empresa do tenant logado
+        empresa = getattr(request, 'tenant', None)
+        empresa_slug = empresa.slug if empresa else None
+
+        if not empresa_slug:
+            return JsonResponse({
+                'success': False,
+                'error': 'Empresa não encontrada. Faça login novamente.'
+            }, status=400)
+
         # Gerar ID único para esta importação
         task_id = str(uuid.uuid4())
-        
+
         # Inicializar status no cache
         cache.set(f'import_{task_id}', {
             'status': 'iniciando',
             'progress': 0,
             'message': 'Preparando importação...',
-            'current': 0,
-            'total': 0,
-            'stats': {
-                'clientes_novos': 0,
-                'clientes_atualizados': 0,
-                'carrinhos_importados': 0,
-                'pedidos_importados': 0
-            }
-        }, timeout=3600)  # 1 hora
-        
-        # Executar importação em thread
-        thread = threading.Thread(
-            target=self._run_import,
-            args=(task_id, start_date, end_date, import_type)
-        )
-        thread.daemon = True
-        thread.start()
-        
+            'empresa': empresa_slug,
+        }, timeout=3600)
+
+        # Executar via Celery (em background, não bloqueia)
+        import_customers_task.delay(task_id, start_date, end_date, import_type, empresa_slug)
+
         return JsonResponse({
             'success': True,
             'task_id': task_id,
             'message': 'Importação iniciada!'
         })
-    
-    def _run_import(self, task_id, start_date, end_date, import_type):
-        """
-        # Método: _run_import
-        # Descrição: Executa importação em background com atualização de progresso
-        # Parâmetros:
-        #   - task_id (str): ID único da tarefa
-        #   - start_date (str): data inicial YYYY-MM-DD
-        #   - end_date (str): data final YYYY-MM-DD
-        #   - import_type (str): tipo de importação
-        # Retorno:
-        #   - None: atualiza cache durante execução
-        """
-        from django.core.management import call_command
-        from io import StringIO
-        import sys
-        
-        # Criar um wrapper para capturar output e atualizar progresso
-        class ProgressCapture:
-            def __init__(self, task_id):
-                self.task_id = task_id
-                self.buffer = StringIO()
-                
-            def write(self, msg):
-                self.buffer.write(msg)
-                
-                # Atualizar progresso baseado nas mensagens
-                if '📦 Processando' in msg:
-                    # Extrair números da mensagem tipo "Processando X carrinhos"
-                    import re
-                    numbers = re.findall(r'\d+', msg)
-                    if numbers:
-                        total = int(numbers[0])
-                        cache_data = cache.get(f'import_{self.task_id}') or {}
-                        cache_data.update({
-                            'status': 'processando',
-                            'progress': 20,
-                            'message': msg.strip(),
-                            'total': total
-                        })
-                        cache.set(f'import_{self.task_id}', cache_data, timeout=3600)
-                
-                elif '✅' in msg and 'processados' in msg:
-                    # Atualizar contagem processada
-                    import re
-                    numbers = re.findall(r'\d+', msg)
-                    if numbers:
-                        current = int(numbers[0])
-                        cache_data = cache.get(f'import_{self.task_id}') or {}
-                        total = cache_data.get('total', 100)
-                        progress = min(90, int((current / total) * 80)) if total > 0 else 50
-                        cache_data.update({
-                            'current': current,
-                            'progress': progress,
-                            'message': f'Processando item {current} de {total}'
-                        })
-                        cache.set(f'import_{self.task_id}', cache_data, timeout=3600)
-                
-                elif '🛍️ Processando' in msg and 'pedidos' in msg:
-                    cache_data = cache.get(f'import_{self.task_id}') or {}
-                    cache_data.update({
-                        'status': 'processando',
-                        'progress': 60,
-                        'message': 'Importando pedidos...'
-                    })
-                    cache.set(f'import_{self.task_id}', cache_data, timeout=3600)
-                
-                elif '🧠 Executando análise' in msg:
-                    cache_data = cache.get(f'import_{self.task_id}') or {}
-                    cache_data.update({
-                        'status': 'analisando',
-                        'progress': 85,
-                        'message': 'Executando análise inteligente...'
-                    })
-                    cache.set(f'import_{self.task_id}', cache_data, timeout=3600)
-                
-                elif '📊 Resumo' in msg:
-                    # Extrair estatísticas finais
-                    cache_data = cache.get(f'import_{self.task_id}') or {}
-                    cache_data.update({
-                        'status': 'finalizando',
-                        'progress': 95,
-                        'message': 'Finalizando importação...'
-                    })
-                    cache.set(f'import_{self.task_id}', cache_data, timeout=3600)
-                
-                elif '✅ Importação concluída' in msg:
-                    cache_data = cache.get(f'import_{self.task_id}') or {}
-                    cache_data.update({
-                        'status': 'concluido',
-                        'progress': 100,
-                        'message': 'Importação concluída com sucesso!'
-                    })
-                    cache.set(f'import_{self.task_id}', cache_data, timeout=3600)
-            
-            def flush(self):
-                pass
-        
-        out = ProgressCapture(task_id)
-        
-        try:
-            # Atualizar status inicial
-            cache_data = cache.get(f'import_{task_id}') or {}
-            cache_data.update({
-                'status': 'conectando',
-                'progress': 5,
-                'message': 'Conectando ao servidor...'
-            })
-            cache.set(f'import_{task_id}', cache_data, timeout=3600)
-            
-            # Chamar comando de importação
-            call_command(
-                'import_customers',
-                start_date=start_date,
-                end_date=end_date,
-                import_type=import_type,
-                stdout=out
-            )
-            
-            # Marcar como concluído
-            cache_data = cache.get(f'import_{task_id}') or {}
-            cache_data.update({
-                'status': 'concluido',
-                'progress': 100,
-                'message': 'Importação concluída com sucesso!',
-                'output': out.buffer.getvalue()
-            })
-            cache.set(f'import_{task_id}', cache_data, timeout=3600)
-            
-        except Exception as e:
-            # Em caso de erro
-            cache_data = cache.get(f'import_{task_id}') or {}
-            cache_data.update({
-                'status': 'erro',
-                'progress': 0,
-                'message': f'Erro: {str(e)}',
-                'error': str(e)
-            })
-            cache.set(f'import_{task_id}', cache_data, timeout=3600)
 
 
 @method_decorator(staff_member_required, name='dispatch')
@@ -264,90 +106,193 @@ class ImportStatusView(View):
                     'message': 'Tarefa não encontrada'
                 }, status=404)
         
-        # Retornar estatísticas gerais
+        # Retornar estatísticas gerais - FILTRADO POR EMPRESA
         from customers.models import Customer, Cart, Order
         from django.db.models import Count, Sum, Q
-        
+
+        # Filtrar por empresa do usuário (tenant)
+        empresa = getattr(request, 'tenant', None)
+
+        # Base querysets filtrados por empresa
+        if empresa:
+            customers_qs = Customer.objects.filter(empresa=empresa)
+            carts_qs = Cart.objects.filter(empresa=empresa)
+            orders_qs = Order.objects.filter(empresa=empresa)
+        elif request.user.is_superuser:
+            # Superuser sem empresa selecionada vê tudo
+            customers_qs = Customer.objects.all()
+            carts_qs = Cart.objects.all()
+            orders_qs = Order.objects.all()
+        else:
+            # Sem empresa, retorna vazio
+            customers_qs = Customer.objects.none()
+            carts_qs = Cart.objects.none()
+            orders_qs = Order.objects.none()
+
         stats = {
-            'total_customers': Customer.objects.count(),
-            'customers_with_phone': Customer.objects.exclude(
+            'total_customers': customers_qs.count(),
+            'customers_with_phone': customers_qs.exclude(
                 Q(phone='') | Q(phone__isnull=True)
             ).count(),
-            'abandoned_carts': Cart.objects.filter(status='abandoned').count(),
-            'total_orders': Order.objects.count(),
+            'abandoned_carts': carts_qs.filter(status='abandoned').count(),
+            'total_orders': orders_qs.count(),
             'recent_imports': []
         }
-        
+
         # Últimas importações (últimas 24h)
         last_24h = timezone.now() - timedelta(hours=24)
-        
-        recent_customers = Customer.objects.filter(
+
+        recent_customers = customers_qs.filter(
             created_at__gte=last_24h
         ).count()
-        
-        recent_carts = Cart.objects.filter(
+
+        recent_carts = carts_qs.filter(
             created_at__gte=last_24h
         ).count()
-        
+
         stats['recent_imports'] = {
             'customers': recent_customers,
             'carts': recent_carts,
-            'last_import': Customer.objects.latest('created_at').created_at.isoformat() if Customer.objects.exists() else None
+            'last_import': customers_qs.latest('created_at').created_at.isoformat() if customers_qs.exists() else None
         }
         
         return JsonResponse(stats)
 
 # Adicionar no final do arquivo importer/views.py
 
+@staff_member_required
+def leads_dashboard_view(request):
+    """Dashboard de importação de leads do Form Vibes"""
+    return render(request, 'importer/leads_dashboard.html', {
+        'page_title': 'Dashboard de Leads - Form Vibes'
+    })
+
+@staff_member_required
+def leads_stats_view(request):
+    """Retorna estatísticas dos leads em JSON - FILTRADO POR EMPRESA"""
+    from customers.models import Lead
+    from django.db.models import Count
+
+    # Filtrar por empresa do usuário (tenant)
+    empresa = getattr(request, 'tenant', None)
+
+    if empresa:
+        leads_qs = Lead.objects.filter(empresa=empresa)
+    elif request.user.is_superuser:
+        leads_qs = Lead.objects.all()
+    else:
+        leads_qs = Lead.objects.none()
+
+    total_leads = leads_qs.count()
+    new_leads = leads_qs.filter(status='new').count()
+    existing_customers = leads_qs.filter(is_customer=True).count()
+    prospects = leads_qs.filter(is_customer=False).count()
+
+    # Leads por status
+    status_breakdown = leads_qs.values('status').annotate(count=Count('id'))
+
+    # Leads recentes (últimas 24h)
+    from datetime import timedelta
+    last_24h = timezone.now() - timedelta(hours=24)
+    recent_leads = leads_qs.filter(created_at__gte=last_24h).count()
+
+    return JsonResponse({
+        'total_leads': total_leads,
+        'new_leads': new_leads,
+        'existing_customers': existing_customers,
+        'prospects': prospects,
+        'recent_leads': recent_leads,
+        'status_breakdown': list(status_breakdown)
+    })
+
+@csrf_exempt
+@staff_member_required
+def import_leads_view(request):
+    """Inicia importação de leads do Form Vibes via Celery"""
+    from importer.tasks import import_leads_task
+
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'Método não permitido'}, status=405)
+
+    data = json.loads(request.body)
+    start_date = data.get('start_date')
+    end_date = data.get('end_date')
+
+    # Obter empresa do tenant logado
+    empresa = getattr(request, 'tenant', None)
+    empresa_slug = empresa.slug if empresa else None
+
+    if not empresa_slug:
+        return JsonResponse({
+            'success': False,
+            'error': 'Empresa não encontrada. Faça login novamente.'
+        }, status=400)
+
+    # Gerar ID único para esta importação
+    task_id = str(uuid.uuid4())
+
+    # Inicializar status no cache
+    cache.set(f'import_leads_{task_id}', {
+        'status': 'iniciando',
+        'progress': 0,
+        'message': 'Preparando importação de leads...',
+        'empresa': empresa_slug,
+    }, timeout=3600)
+
+    # Executar via Celery
+    import_leads_task.delay(task_id, start_date, end_date, empresa_slug)
+
+    return JsonResponse({
+        'success': True,
+        'task_id': task_id,
+        'message': 'Importação de leads iniciada!'
+    })
+
+@staff_member_required
+def leads_import_status_view(request):
+    """Retorna status da importação de leads"""
+    task_id = request.GET.get('task_id')
+
+    if not task_id:
+        return JsonResponse({'success': False, 'error': 'task_id não fornecido'}, status=400)
+
+    status = cache.get(f'import_leads_{task_id}')
+
+    if status:
+        return JsonResponse(status)
+    else:
+        return JsonResponse({
+            'status': 'not_found',
+            'message': 'Tarefa não encontrada'
+        }, status=404)
+
 @csrf_exempt
 @staff_member_required
 def check_recovery_view(request):
-    from customers.models import Cart, Order
-    from datetime import timedelta
-    from django.utils import timezone
-    
+    """Verifica recuperações de carrinho via Celery"""
+    from importer.tasks import check_recovery_task
+
     if request.method == 'POST':
-        abandoned_carts = Cart.objects.filter(
-            status='abandoned',
-            was_recovered=False
-        )
-        
-        recovered = 0
-        abandoned = 0
-        waiting = 0
-        
-        for cart in abandoned_carts:
-            window_end = cart.created_at + timedelta(days=30)
-            
-            recovery_order = Order.objects.filter(
-                customer=cart.customer,
-                created_at__gt=cart.created_at,
-                created_at__lte=window_end,
-                status__in=['wc-completed', 'wc-processing', 'wc-on-hold']
-            ).first()
-            
-            if recovery_order:
-                cart.status = 'recovered'
-                cart.was_recovered = True
-                cart.recovered_order = recovery_order
-                cart.recovered_at = recovery_order.created_at
-                cart.recovery_value = recovery_order.total
-                cart.save()
-                recovered += 1
-            elif timezone.now() > window_end:
-                abandoned += 1
-            else:
-                waiting += 1
-        
-        total = recovered + abandoned
-        rate = (recovered / total * 100) if total > 0 else 0
-        
-        return JsonResponse({
-            'success': True,
-            'recovered': recovered,
-            'abandoned': abandoned,
-            'waiting': waiting,
-            'rate': round(rate, 1)
-        })
-    
+        empresa = getattr(request, 'tenant', None)
+        empresa_slug = empresa.slug if empresa else None
+
+        if not empresa_slug:
+            return JsonResponse({
+                'success': False,
+                'error': 'Empresa não encontrada. Faça login novamente.'
+            }, status=400)
+
+        # Executar via Celery e aguardar resultado (timeout de 60s)
+        result = check_recovery_task.apply_async(args=[empresa_slug])
+
+        try:
+            # Aguardar resultado com timeout
+            task_result = result.get(timeout=60)
+            return JsonResponse(task_result)
+        except Exception as e:
+            return JsonResponse({
+                'success': False,
+                'error': f'Erro ao verificar recuperações: {str(e)}'
+            }, status=500)
+
     return JsonResponse({'success': False}, status=400)

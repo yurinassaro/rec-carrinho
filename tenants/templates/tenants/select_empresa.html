@@ -1,0 +1,205 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block title %}Selecionar Empresa{% endblock %}
+
+{% block branding %}
+<h1 id="site-name">
+    <a href="{% url 'admin:index' %}">Customer Intelligence</a>
+</h1>
+{% endblock %}
+
+{% block content %}
+<style>
+    .empresa-container {
+        max-width: 800px;
+        margin: 40px auto;
+        padding: 20px;
+    }
+
+    .empresa-header {
+        text-align: center;
+        margin-bottom: 40px;
+    }
+
+    .empresa-header h1 {
+        font-size: 28px;
+        color: #333;
+        margin-bottom: 10px;
+    }
+
+    .empresa-header p {
+        color: #666;
+        font-size: 16px;
+    }
+
+    .empresas-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 20px;
+    }
+
+    .empresa-card {
+        background: white;
+        border: 2px solid #e0e0e0;
+        border-radius: 12px;
+        padding: 24px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        text-align: left;
+        width: 100%;
+    }
+
+    .empresa-card:hover {
+        border-color: #79aec8;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        transform: translateY(-2px);
+    }
+
+    .empresa-card:focus {
+        outline: none;
+        border-color: #417690;
+        box-shadow: 0 0 0 3px rgba(65, 118, 144, 0.3);
+    }
+
+    .empresa-content {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+    }
+
+    .empresa-logo {
+        width: 60px;
+        height: 60px;
+        border-radius: 8px;
+        object-fit: contain;
+        background: #f5f5f5;
+    }
+
+    .empresa-initial {
+        width: 60px;
+        height: 60px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 28px;
+        font-weight: bold;
+        text-transform: uppercase;
+    }
+
+    .empresa-info {
+        flex: 1;
+    }
+
+    .empresa-nome {
+        font-size: 18px;
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 4px;
+    }
+
+    .empresa-role {
+        font-size: 14px;
+        color: #666;
+        margin-bottom: 8px;
+    }
+
+    .empresa-badges {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .badge {
+        padding: 3px 10px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 500;
+    }
+
+    .badge-default {
+        background: #28a745;
+        color: white;
+    }
+
+    .badge-woo {
+        background: #96588a;
+        color: white;
+    }
+
+    .no-empresas {
+        text-align: center;
+        padding: 60px 20px;
+        background: #f9f9f9;
+        border-radius: 12px;
+    }
+
+    .no-empresas h2 {
+        color: #666;
+        margin-bottom: 10px;
+    }
+
+    .no-empresas p {
+        color: #999;
+    }
+
+    @media (max-width: 600px) {
+        .empresa-container {
+            margin: 20px;
+            padding: 10px;
+        }
+
+        .empresas-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+
+<div class="empresa-container">
+    <div class="empresa-header">
+        <h1>Selecione uma Empresa</h1>
+        <p>Escolha a empresa que deseja acessar</p>
+    </div>
+
+    {% if empresas %}
+    <div class="empresas-grid">
+        {% for eu in empresas %}
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="empresa_id" value="{{ eu.empresa.id }}">
+            <button type="submit" class="empresa-card">
+                <div class="empresa-content">
+                    {% if eu.empresa.logo %}
+                    <img src="{{ eu.empresa.logo.url }}" alt="{{ eu.empresa.nome }}" class="empresa-logo">
+                    {% else %}
+                    <div class="empresa-initial" style="background-color: {{ eu.empresa.cor_primaria }};">
+                        {{ eu.empresa.nome|first }}
+                    </div>
+                    {% endif %}
+                    <div class="empresa-info">
+                        <div class="empresa-nome">{{ eu.empresa.nome }}</div>
+                        <div class="empresa-role">{{ eu.get_role_display }}</div>
+                        <div class="empresa-badges">
+                            {% if eu.is_default %}
+                            <span class="badge badge-default">Padrao</span>
+                            {% endif %}
+                            {% if eu.empresa.has_woocommerce_config %}
+                            <span class="badge badge-woo">WooCommerce</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </button>
+        </form>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="no-empresas">
+        <h2>Nenhuma empresa disponivel</h2>
+        <p>Voce nao tem acesso a nenhuma empresa. Contate o administrador.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

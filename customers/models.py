@@ -3,9 +3,10 @@ from django.utils import timezone
 from django.db.models import JSONField
 import re
 
+
 class Customer(models.Model):
-    """Cliente único com análise inteligente"""
-    
+    """Cliente único com análise inteligente - MULTI-TENANT"""
+
     CUSTOMER_STATUS = [
         ('never_bought', 'Nunca Comprou'),
         ('first_time', 'Primeira Compra'),
@@ -14,9 +15,18 @@ class Customer(models.Model):
         ('inactive', 'Inativo'),
         ('vip', 'VIP'),
     ]
-    
+
+    # Tenant (Empresa)
+    empresa = models.ForeignKey(
+        'tenants.Empresa',
+        on_delete=models.CASCADE,
+        related_name='customers',
+        null=True,  # Temporario para migracao
+        blank=True
+    )
+
     # Identificação
-    email = models.EmailField(unique=True, db_index=True)
+    email = models.EmailField(db_index=True)  # Removido unique=True, sera por empresa
     phone = models.CharField(max_length=20, null=True, blank=True, db_index=True)
     first_name = models.CharField(max_length=100, null=True, blank=True)
     last_name = models.CharField(max_length=100, null=True, blank=True)
@@ -66,13 +76,21 @@ class Customer(models.Model):
         db_table = 'customers'
         ordering = ['-score', '-last_activity']
         indexes = [
-            models.Index(fields=['status', '-score']),
-            models.Index(fields=['email', 'phone']),
+            models.Index(fields=['empresa', 'status', '-score']),
+            models.Index(fields=['empresa', 'email']),
+            models.Index(fields=['empresa', 'phone']),
             models.Index(fields=['-last_activity']),
         ]
-    
+        constraints = [
+            models.UniqueConstraint(
+                fields=['empresa', 'email'],
+                name='unique_customer_email_per_empresa'
+            )
+        ]
+
     def __str__(self):
-        return f"{self.email} ({self.get_status_display()})"
+        empresa_slug = self.empresa.slug if self.empresa else 'sem-empresa'
+        return f"{self.email} ({self.get_status_display()}) - {empresa_slug}"
     
     @property
     def full_name(self):
@@ -148,19 +166,28 @@ class Customer(models.Model):
 
 
 class Cart(models.Model):
-    """Carrinhos importados do WooCommerce"""
-    
+    """Carrinhos importados do WooCommerce - MULTI-TENANT"""
+
     CART_STATUS = [
         ('active', 'Ativo'),
         ('abandoned', 'Abandonado'),
         ('recovered', 'Recuperado'),
         ('converted', 'Convertido'),
     ]
-    
+
+    # Tenant (Empresa)
+    empresa = models.ForeignKey(
+        'tenants.Empresa',
+        on_delete=models.CASCADE,
+        related_name='carts',
+        null=True,  # Temporario para migracao
+        blank=True
+    )
+
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='carts')
-    
+
     # Dados do WooCommerce
-    checkout_id = models.CharField(max_length=100, unique=True)
+    checkout_id = models.CharField(max_length=100, db_index=True)  # Removido unique, sera por empresa
     session_id = models.CharField(max_length=255)
     cart_contents = JSONField()
     cart_total = models.DecimalField(max_digits=10, decimal_places=2)
@@ -199,18 +226,33 @@ class Cart(models.Model):
         db_table = 'carts'
         ordering = ['-created_at']
         indexes = [
-            models.Index(fields=['customer', '-created_at']),
-            models.Index(fields=['status', '-created_at']),
+            models.Index(fields=['empresa', 'customer', '-created_at']),
+            models.Index(fields=['empresa', 'status', '-created_at']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['empresa', 'checkout_id'],
+                name='unique_cart_checkout_per_empresa'
+            )
         ]
 
 
 class Order(models.Model):
-    """Pedidos importados do WooCommerce"""
-    
+    """Pedidos importados do WooCommerce - MULTI-TENANT"""
+
+    # Tenant (Empresa)
+    empresa = models.ForeignKey(
+        'tenants.Empresa',
+        on_delete=models.CASCADE,
+        related_name='orders',
+        null=True,  # Temporario para migracao
+        blank=True
+    )
+
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='orders')
-    
+
     # Dados do pedido
-    order_id = models.CharField(max_length=100, unique=True)
+    order_id = models.CharField(max_length=100, db_index=True)  # Removido unique, sera por empresa
     order_number = models.CharField(max_length=100)
     total = models.DecimalField(max_digits=10, decimal_places=2)
     status = models.CharField(max_length=50)
@@ -225,10 +267,16 @@ class Order(models.Model):
     
     # Relacionamento com carrinho
     related_cart = models.ForeignKey(Cart, null=True, blank=True, on_delete=models.SET_NULL)
-    
+
     class Meta:
         db_table = 'orders'
         ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['empresa', 'order_id'],
+                name='unique_order_id_per_empresa'
+            )
+        ]
 
 
 class CustomerAnalysis(models.Model):
@@ -266,3 +314,118 @@ class CustomerAnalysis(models.Model):
     class Meta:
         db_table = 'customer_analysis'
         ordering = ['-date']
+
+
+# Adicionar após a classe CustomerAnalysis
+# puxa dados do form vibes
+class Lead(models.Model):
+    """Leads do Form Vibes - MULTI-TENANT"""
+
+    LEAD_STATUS = [
+        ('new', 'Novo'),
+        ('contacted', 'Contactado'),
+        ('customer', 'É Cliente'),
+        ('potential', 'Potencial'),
+        ('lost', 'Perdido'),
+    ]
+
+    # Tenant (Empresa)
+    empresa = models.ForeignKey(
+        'tenants.Empresa',
+        on_delete=models.CASCADE,
+        related_name='leads',
+        null=True,  # Temporario para migracao
+        blank=True
+    )
+
+    # Dados do formulário
+    form_id = models.CharField(max_length=50, db_index=True)  # Removido unique, sera por empresa
+    nome = models.CharField(max_length=200)
+    whatsapp = models.CharField(max_length=20, db_index=True)
+    numero_sapato = models.CharField(max_length=10, db_index=True)
+    ip_address = models.CharField(max_length=45, null=True, blank=True)
+
+    # Status e relacionamentos
+    status = models.CharField(max_length=20, choices=LEAD_STATUS, default='new')
+    is_customer = models.BooleanField(default=False)
+    related_customer = models.ForeignKey(
+        Customer,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='leads'
+    )
+
+    # Controle de contato
+    whatsapp_sent = models.BooleanField(default=False)
+    whatsapp_sent_date = models.DateTimeField(null=True, blank=True)
+    whatsapp_auto_sent_count = models.IntegerField(default=0)
+    whatsapp_auto_status = models.CharField(max_length=50, null=True, blank=True)
+    whatsapp_error_message = models.TextField(null=True, blank=True)
+    whatsapp_has_conversation = models.BooleanField(null=True, blank=True)
+    whatsapp_last_check = models.DateTimeField(null=True, blank=True)
+    contact_attempts = models.IntegerField(default=0)
+    notes = models.TextField(blank=True)
+
+    # Conversão
+    converted_to_customer = models.BooleanField(default=False)
+    conversion_date = models.DateTimeField(null=True, blank=True)
+    first_order = models.ForeignKey(
+        'Order',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='converted_from_lead'
+    )
+
+    # Timestamps
+    created_at = models.DateTimeField()
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'leads'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['empresa', 'whatsapp', 'numero_sapato']),
+            models.Index(fields=['empresa', 'status', '-created_at']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['empresa', 'form_id'],
+                name='unique_lead_form_per_empresa'
+            )
+        ]
+
+    def __str__(self):
+        empresa_slug = self.empresa.slug if self.empresa else 'sem-empresa'
+        return f"{self.nome} - {self.whatsapp} - {empresa_slug}"
+
+    @property
+    def whatsapp_formatted(self):
+        """Formata número para WhatsApp"""
+        import re
+        if not self.whatsapp:
+            return None
+        phone = re.sub(r'\D', '', self.whatsapp)
+        if len(phone) < 10:
+            return None
+        if not phone.startswith('55'):
+            phone = f'55{phone}'
+        return phone
+
+    def check_if_customer(self):
+        """
+        Verifica se o lead já é cliente baseado no WhatsApp
+        """
+        # Buscar por WhatsApp
+        customer = Customer.objects.filter(
+            phone__contains=self.whatsapp.replace(' ', '').replace('-', '')
+        ).first()
+
+        if customer:
+            self.is_customer = True
+            self.related_customer = customer
+            self.status = 'customer'
+            return True
+
+        return False

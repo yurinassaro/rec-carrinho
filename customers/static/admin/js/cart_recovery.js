@@ -26,21 +26,16 @@ function toggleRecovery(cartId, type, newStatus) {
     });
 }
 
-function openWhatsApp(phone, cartId) {
+function openWhatsApp(phone, cartId, nome) {
     // Prevenir comportamento padrão
     event.preventDefault();
     event.stopPropagation();
-    
+
     // Salvar posição do scroll
     const scrollPos = window.scrollY || window.pageYOffset;
-    
+
     const mensagem = encodeURIComponent(
-        "Olá, tudo bem ? 👋\n\n" +
-        "Sou aqui da TARRAGONA CALÇADOS.\n" +
-        "Verificamos que entrou em nosso site e acabou não finalizando a compra..\n" +
-        "Gostaria de saber se ficou com alguma duvida sobre o site, algum modelo, ou como finalizar.\n" +
-        "Os clientes que compram aqui no ATACADO vendem entre 450 a 700, hoje somos a maior empresa ref a custo beneficio do brasil com fabricação direta.\n" +
-        "Estou a disposição para sanar todas as suas duvidas e te ajudar. 🛒"
+        `Olá ${nome}, tudo bem ??`
     );
     
     const csrfToken = getCookie('csrftoken');
@@ -119,4 +114,57 @@ window.addEventListener('load', function() {
         window.scrollTo(0, parseInt(scrollPos));
         sessionStorage.removeItem('scrollPos');
     }
+});
+
+// Event listeners para dropdowns de status dos carrinhos
+document.addEventListener('DOMContentLoaded', function() {
+    // Selecionar todos os dropdowns de status
+    const statusSelects = document.querySelectorAll('.cart-status-select');
+
+    statusSelects.forEach(function(select) {
+        select.addEventListener('change', function() {
+            const cartId = this.getAttribute('data-cart-id');
+            const newStatus = this.value;
+            const csrfToken = getCookie('csrftoken');
+
+            // Desabilitar o select durante a requisição
+            this.disabled = true;
+
+            fetch('/admin/customers/cart/update-cart-status/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
+                body: JSON.stringify({
+                    cart_id: cartId,
+                    status: newStatus
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Atualizar a cor do select
+                    this.style.background = data.color;
+                    this.disabled = false;
+
+                    // Mostrar mensagem de sucesso discreta
+                    const successMsg = document.createElement('span');
+                    successMsg.textContent = '✓';
+                    successMsg.style.cssText = 'color: #4CAF50; margin-left: 5px; font-weight: bold;';
+                    this.parentNode.appendChild(successMsg);
+
+                    setTimeout(() => successMsg.remove(), 2000);
+                } else {
+                    alert('Erro ao atualizar status: ' + (data.error || 'Desconhecido'));
+                    this.disabled = false;
+                }
+            })
+            .catch(error => {
+                console.error('Erro:', error);
+                alert('Erro ao atualizar status do carrinho');
+                this.disabled = false;
+            });
+        });
+    });
 });

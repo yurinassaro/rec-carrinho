@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from sshtunnel import SSHTunnelForwarder
 import pymysql
 from customers.models import Customer, Cart, Order
+from tenants.models import Empresa
 import json
 import os
 from dotenv import load_dotenv
@@ -15,49 +16,109 @@ import traceback
 
 load_dotenv()
 
+
 class Command(BaseCommand):
-    help = 'Importa e analisa clientes do WooCommerce'
-    
+    help = 'Importa e analisa clientes do WooCommerce - MULTI-TENANT'
+
     def __init__(self):
         super().__init__()
-        self.ssh_config = {
-            'host': os.getenv('SSH_HOST'),
-            'user': os.getenv('SSH_USER'),
-            'key': os.getenv('SSH_KEY'),
-        }
-        
-        self.db_config = {
-            'user': os.getenv('WOO_DB_USER'),
-            'password': os.getenv('WOO_DB_PASS'),
-            'database': os.getenv('WOO_DB_NAME'),
-        }
+        self.empresa = None  # Sera definido no handle()
+        self.ssh_config = {}
+        self.db_config = {}
+
+    def _load_config_from_empresa(self):
+        """Carrega configuracoes da empresa ou do .env (fallback)"""
+        if self.empresa and self.empresa.has_woocommerce_config:
+            self.ssh_config = {
+                'host': self.empresa.woo_ssh_host,
+                'user': self.empresa.woo_ssh_user,
+                'key': os.path.expanduser(self.empresa.woo_ssh_key_path or '~/.ssh/id_ed25519'),
+            }
+            self.db_config = {
+                'host': self.empresa.woo_db_host or '127.0.0.1',
+                'port': self.empresa.woo_db_port or 3306,
+                'user': self.empresa.woo_db_user,
+                'password': self.empresa.woo_db_password,
+                'database': self.empresa.woo_db_name,
+            }
+            self.table_prefix = self.empresa.woo_table_prefix or 'wp_'
+            # Determinar se usa SSH ou conexão direta
+            self.use_ssh = bool(self.empresa.woo_ssh_host)
+        else:
+            # Fallback para .env (compatibilidade)
+            self.ssh_config = {
+                'host': os.getenv('SSH_HOST'),
+                'user': os.getenv('SSH_USER'),
+                'key': os.getenv('SSH_KEY'),
+            }
+            self.db_config = {
+                'host': '127.0.0.1',
+                'port': 3306,
+                'user': os.getenv('WOO_DB_USER'),
+                'password': os.getenv('WOO_DB_PASS'),
+                'database': os.getenv('WOO_DB_NAME'),
+            }
+            self.table_prefix = 'cli_'
+            self.use_ssh = bool(os.getenv('SSH_HOST'))
     
     def handle(self, *args, **options):
+        # Obter empresa
+        empresa_slug = options.get('empresa')
+        if empresa_slug:
+            try:
+                self.empresa = Empresa.objects.get(slug=empresa_slug, ativo=True)
+                self.stdout.write(f'🏢 Empresa: {self.empresa.nome}')
+            except Empresa.DoesNotExist:
+                self.stderr.write(f'❌ Empresa "{empresa_slug}" nao encontrada ou inativa')
+                return
+        else:
+            # Usar primeira empresa como fallback
+            self.empresa = Empresa.objects.filter(ativo=True).first()
+            if self.empresa:
+                self.stdout.write(f'🏢 Usando empresa padrao: {self.empresa.nome}')
+            else:
+                self.stderr.write('❌ Nenhuma empresa cadastrada. Crie uma empresa primeiro.')
+                return
+
+        # Carregar configuracoes da empresa
+        self._load_config_from_empresa()
 
         start_date = options.get('start_date')
         end_date = options.get('end_date')
         import_type = options.get('import_type', 'all')
-        
+
         # Converter strings para datetime se fornecidas
         if start_date:
             self.start_date = datetime.strptime(start_date, '%Y-%m-%d')
         else:
             self.start_date = datetime.now() - timedelta(days=30)
-        
+
         if end_date:
             self.end_date = datetime.strptime(end_date, '%Y-%m-%d')
         else:
             self.end_date = datetime.now()
-        
+
         # Adicionar 23:59:59 ao end_date para incluir o dia todo
         self.end_date = self.end_date.replace(hour=23, minute=59, second=59)
-    
+
         self.stdout.write(
             f'🚀 Iniciando importação inteligente de clientes...\n'
+            f'🏢 Empresa: {self.empresa.nome}\n'
             f'📅 Período: {self.start_date.strftime("%d/%m/%Y")} até {self.end_date.strftime("%d/%m/%Y")}\n'
-            f'📦 Tipo: {import_type}'
+            f'📦 Tipo: {import_type}\n'
+            f'🔌 Conexão: {"SSH Tunnel" if self.use_ssh else "Direta"}'
         )
-   
+
+        # Escolher método de conexão
+        if self.use_ssh:
+            self._import_via_ssh(import_type)
+        else:
+            self._import_direct(import_type)
+
+        self.stdout.write(self.style.SUCCESS('\n✅ Importação concluída com sucesso!'))
+
+    def _import_via_ssh(self, import_type):
+        """Importação via SSH Tunnel"""
         with SSHTunnelForwarder(
             (self.ssh_config['host'], 22),
             ssh_username=self.ssh_config['user'],
@@ -65,9 +126,9 @@ class Command(BaseCommand):
             remote_bind_address=("127.0.0.1", 3306),
             local_bind_address=("127.0.0.1", 0),
         ) as tunnel:
-            
+
             self.stdout.write(f'✅ Túnel SSH conectado')
-            
+
             conn = pymysql.connect(
                 host="127.0.0.1",
                 port=tunnel.local_bind_port,
@@ -77,28 +138,48 @@ class Command(BaseCommand):
                 charset="utf8mb4",
                 cursorclass=pymysql.cursors.DictCursor,
             )
-            
-            with conn.cursor() as cursor:
-                # Executar importações baseado no tipo selecionado
-                if import_type in ['all', 'carts']:
-                    self.import_abandoned_carts(cursor)
-                
-                if import_type in ['all', 'orders']:
-                    self.import_orders(cursor)
-                    self.enrich_customer_data_from_orders(cursor)
-                
-                # Enriquecer dados
-                self.enrich_customer_phone_data(cursor)
-                
-                # Análise inteligente
-                self.analyze_customers()
-                
-                # NOVA VERIFICAÇÃO DE RECUPERAÇÃO
-                self.check_and_update_recovered_carts()  # <-- ADICIONAR AQUI
-            
+
+            self._execute_import(conn, import_type)
             conn.close()
 
-        self.stdout.write(self.style.SUCCESS('\n✅ Importação concluída com sucesso!'))
+    def _import_direct(self, import_type):
+        """Importação via conexão direta (sem SSH)"""
+        self.stdout.write(f'🔌 Conectando diretamente em {self.db_config["host"]}:{self.db_config["port"]}')
+
+        conn = pymysql.connect(
+            host=self.db_config['host'],
+            port=self.db_config['port'],
+            user=self.db_config['user'],
+            password=self.db_config['password'],
+            database=self.db_config['database'],
+            charset="utf8mb4",
+            cursorclass=pymysql.cursors.DictCursor,
+            connect_timeout=30,
+        )
+
+        self.stdout.write(f'✅ Conexão direta estabelecida')
+        self._execute_import(conn, import_type)
+        conn.close()
+
+    def _execute_import(self, conn, import_type):
+        """Executa a importação com a conexão fornecida"""
+        with conn.cursor() as cursor:
+            # Executar importações baseado no tipo selecionado
+            if import_type in ['all', 'carts']:
+                self.import_abandoned_carts(cursor)
+
+            if import_type in ['all', 'orders']:
+                self.import_orders(cursor)
+                self.enrich_customer_data_from_orders(cursor)
+
+            # Enriquecer dados
+            self.enrich_customer_phone_data(cursor)
+
+            # Análise inteligente
+            self.analyze_customers()
+
+            # Verificação de recuperação
+            self.check_and_update_recovered_carts()
 
     
     def custom_object_hook(self, obj):
@@ -398,6 +479,7 @@ class Command(BaseCommand):
                             )
                 
                 customer, created = Customer.objects.update_or_create(
+                    empresa=self.empresa,
                     email=cart_data['email'],
                     defaults=customer_data
                 )
@@ -416,6 +498,7 @@ class Command(BaseCommand):
                 
                 # Criar ou atualizar carrinho
                 Cart.objects.update_or_create(
+                    empresa=self.empresa,
                     checkout_id=cart_data['checkout_id'],
                     defaults={
                         'customer': customer,
@@ -483,10 +566,16 @@ class Command(BaseCommand):
     
     def import_abandoned_carts(self, cursor):
         """Importa carrinhos abandonados e cria/atualiza clientes"""
-        
-        # REMOVER FILTRO DE DATA TEMPORARIAMENTE para importar TODOS
-        query = """
-        SELECT 
+
+        # Formatar datas para MySQL
+        start_date_str = self.start_date.strftime('%Y-%m-%d %H:%M:%S')
+        end_date_str = self.end_date.strftime('%Y-%m-%d %H:%M:%S')
+
+        # Usar prefixo da tabela configurado na empresa
+        table_name = f'{self.table_prefix}cartflows_ca_cart_abandonment'
+
+        query = f"""
+        SELECT
             id,
             checkout_id,
             email,
@@ -496,16 +585,15 @@ class Command(BaseCommand):
             other_fields,
             order_status,
             time
-        FROM cli_cartflows_ca_cart_abandonment
-        WHERE 1=1
+        FROM {table_name}
+        WHERE time BETWEEN %s AND %s
         ORDER BY time DESC
         """
-        
-        # Executar SEM parâmetros de data
-        cursor.execute(query)
+
+        cursor.execute(query, (start_date_str, end_date_str))
         carts = cursor.fetchall()
-        
-        self.stdout.write(f'📦 Encontrados {len(carts)} carrinhos TOTAIS no banco')
+
+        self.stdout.write(f'📦 Encontrados {len(carts)} carrinhos no período selecionado')
         
         # Contar por status
         status_count = {}
@@ -545,6 +633,7 @@ class Command(BaseCommand):
                             customer_data['last_name'] = wcf_data['last_name']
                 
                 customer, created = Customer.objects.update_or_create(
+                    empresa=self.empresa,
                     email=cart_data['email'],
                     defaults=customer_data
                 )
@@ -572,7 +661,8 @@ class Command(BaseCommand):
                 # Criar ou atualizar carrinho
                 # Criar ou atualizar carrinho
                 cart, cart_created = Cart.objects.update_or_create(
-                    checkout_id=f"{cart_data['id']}_{cart_data['checkout_id']}",  # ✅ Correto
+                    empresa=self.empresa,
+                    checkout_id=f"{cart_data['id']}_{cart_data['checkout_id']}",
                     defaults={
                         'customer': customer,
                         'session_id': cart_data.get('session_id', ''),
@@ -689,6 +779,7 @@ class Command(BaseCommand):
                 
                 # Criar ou atualizar cliente
                 customer, created = Customer.objects.update_or_create(
+                    empresa=self.empresa,
                     email=order_data['email'],
                     defaults={
                         'phone': order_data['phone'] or '',
@@ -699,6 +790,7 @@ class Command(BaseCommand):
                 
                 # Criar pedido
                 Order.objects.update_or_create(
+                    empresa=self.empresa,
                     order_id=str(order_data['order_id']),
                     defaults={
                         'customer': customer,
@@ -1062,6 +1154,11 @@ class Command(BaseCommand):
     
     def add_arguments(self, parser):
         parser.add_argument(
+            '--empresa',
+            type=str,
+            help='Slug da empresa para importar (ex: anacdeluxe)',
+        )
+        parser.add_argument(
             '--start_date',
             type=str,
             help='Data inicial (YYYY-MM-DD)',
@@ -1079,8 +1176,8 @@ class Command(BaseCommand):
             help='Tipo de importação',
         )
         parser.add_argument(
-            '--check_recovery', 
-            action='store_true', 
+            '--check_recovery',
+            action='store_true',
             help='Forçar verificação de recuperação'
         )
 

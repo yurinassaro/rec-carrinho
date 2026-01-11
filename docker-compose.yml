@@ -1,0 +1,135 @@
+version: '3.8'
+
+services:
+  # Aplicacao Django
+  web:
+    build: .
+    container_name: customer_intelligence_web
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD}@db:5432/customer_intelligence
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+      - ./logs:/app/logs
+      - ssh_keys:/home/appuser/.ssh:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - app_network
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py collectstatic --noinput --clear &&
+             gunicorn --bind 0.0.0.0:8000 --workers 3 --timeout 120 customer_intelligence.wsgi:application"
+
+  # Banco de dados PostgreSQL
+  db:
+    image: postgres:15-alpine
+    container_name: customer_intelligence_db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=customer_intelligence
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-customer2024}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis para cache e Celery
+  redis:
+    image: redis:7-alpine
+    container_name: customer_intelligence_redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - app_network
+    command: redis-server --appendonly yes
+
+  # Celery Worker (para tarefas assincronas)
+  celery:
+    build: .
+    container_name: customer_intelligence_celery
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD}@db:5432/customer_intelligence
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ssh_keys:/home/appuser/.ssh:ro
+    depends_on:
+      - db
+      - redis
+    networks:
+      - app_network
+    command: celery -A customer_intelligence worker -l info
+
+  # Celery Beat (agendador de tarefas)
+  celery-beat:
+    build: .
+    container_name: customer_intelligence_beat
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD}@db:5432/customer_intelligence
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+    networks:
+      - app_network
+    command: celery -A customer_intelligence beat -l info
+
+  # Nginx (proxy reverso)
+  nginx:
+    image: nginx:alpine
+    container_name: customer_intelligence_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/sites:/etc/nginx/sites-enabled:ro
+      - static_volume:/app/staticfiles:ro
+      - media_volume:/app/media:ro
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot:ro
+    depends_on:
+      - web
+    networks:
+      - app_network
+
+  # Certbot (SSL)
+  certbot:
+    image: certbot/certbot
+    container_name: customer_intelligence_certbot
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+
+volumes:
+  postgres_data:
+  redis_data:
+  static_volume:
+  media_volume:
+  ssh_keys:
+
+networks:
+  app_network:
+    driver: bridge

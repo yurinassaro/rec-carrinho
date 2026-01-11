@@ -1,0 +1,337 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block title %}Exportar Leads{% endblock %}
+
+{% block extrastyle %}
+<style>
+    body {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+    }
+
+    .export-container {
+        max-width: 800px;
+        margin: 40px auto;
+        background: white;
+        border-radius: 20px;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        overflow: hidden;
+    }
+
+    .export-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 30px;
+        text-align: center;
+    }
+
+    .export-header h1 {
+        margin: 0;
+        font-size: 28px;
+        font-weight: 600;
+    }
+
+    .export-header p {
+        margin: 10px 0 0 0;
+        opacity: 0.9;
+        font-size: 14px;
+    }
+
+    .export-body {
+        padding: 40px;
+    }
+
+    .form-section {
+        margin-bottom: 30px;
+    }
+
+    .form-section h3 {
+        color: #333;
+        font-size: 16px;
+        margin-bottom: 15px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+    }
+
+    .form-section h3::before {
+        content: '';
+        width: 4px;
+        height: 20px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        margin-right: 10px;
+        border-radius: 2px;
+    }
+
+    .format-options {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 15px;
+        margin-bottom: 20px;
+    }
+
+    .format-card {
+        position: relative;
+        border: 2px solid #e0e0e0;
+        border-radius: 12px;
+        padding: 20px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        background: white;
+    }
+
+    .format-card:hover {
+        border-color: #667eea;
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(102, 126, 234, 0.2);
+    }
+
+    .format-card input[type="radio"] {
+        position: absolute;
+        opacity: 0;
+    }
+
+    .format-card input[type="radio"]:checked + label {
+        color: #667eea;
+    }
+
+    .format-card input[type="radio"]:checked ~ .format-card {
+        border-color: #667eea;
+        background: linear-gradient(135deg, rgba(102, 126, 234, 0.05) 0%, rgba(118, 75, 162, 0.05) 100%);
+    }
+
+    .format-card label {
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        margin: 0;
+        font-weight: 600;
+        font-size: 15px;
+        color: #333;
+    }
+
+    .format-card .format-icon {
+        font-size: 24px;
+        margin-right: 12px;
+    }
+
+    .format-card .format-desc {
+        font-size: 12px;
+        color: #666;
+        margin-top: 8px;
+        font-weight: normal;
+    }
+
+    .date-filters {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+    }
+
+    .date-group {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .date-group label {
+        font-size: 14px;
+        color: #555;
+        margin-bottom: 8px;
+        font-weight: 500;
+    }
+
+    .date-group input {
+        padding: 12px;
+        border: 2px solid #e0e0e0;
+        border-radius: 8px;
+        font-size: 14px;
+        transition: all 0.3s ease;
+    }
+
+    .date-group input:focus {
+        outline: none;
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+
+    .info-box {
+        background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+        border-left: 4px solid #667eea;
+        padding: 15px 20px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+    }
+
+    .info-box p {
+        margin: 0;
+        color: #555;
+        font-size: 14px;
+    }
+
+    .info-box strong {
+        color: #667eea;
+    }
+
+    .btn-export {
+        width: 100%;
+        padding: 16px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        border-radius: 12px;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+    }
+
+    .btn-export:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+    }
+
+    .btn-export:active {
+        transform: translateY(0);
+    }
+
+    .btn-cancel {
+        width: 100%;
+        padding: 12px;
+        background: white;
+        color: #666;
+        border: 2px solid #e0e0e0;
+        border-radius: 12px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        margin-top: 10px;
+        transition: all 0.3s ease;
+    }
+
+    .btn-cancel:hover {
+        border-color: #999;
+        color: #333;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="export-container">
+    <div class="export-header">
+        <h1>📊 Exportar Leads</h1>
+        <p>Selecione o formato e o período para exportação</p>
+    </div>
+
+    <div class="export-body">
+        {% if selected_count %}
+        <div class="info-box">
+            <p><strong>{{ selected_count }}</strong> lead(s) selecionado(s)</p>
+        </div>
+        {% endif %}
+
+        <form method="GET" action="/admin/customers/lead/export-leads/download/" id="exportForm">
+            <!-- Formato de Exportação -->
+            <div class="form-section">
+                <h3>Formato de Exportação</h3>
+                <div class="format-options">
+                    <div class="format-card" onclick="selectFormat('csv')">
+                        <input type="radio" name="format" value="csv" id="format_csv" checked>
+                        <label for="format_csv">
+                            <span class="format-icon">📄</span>
+                            <div>
+                                CSV
+                                <div class="format-desc">Planilha compatível com Excel</div>
+                            </div>
+                        </label>
+                    </div>
+
+                    <div class="format-card" onclick="selectFormat('xlsx')">
+                        <input type="radio" name="format" value="xlsx" id="format_xlsx">
+                        <label for="format_xlsx">
+                            <span class="format-icon">📗</span>
+                            <div>
+                                XLSX
+                                <div class="format-desc">Excel com formatação</div>
+                            </div>
+                        </label>
+                    </div>
+
+                    <div class="format-card" onclick="selectFormat('txt')">
+                        <input type="radio" name="format" value="txt" id="format_txt">
+                        <label for="format_txt">
+                            <span class="format-icon">📝</span>
+                            <div>
+                                TXT
+                                <div class="format-desc">Arquivo de texto formatado</div>
+                            </div>
+                        </label>
+                    </div>
+
+                    <div class="format-card" onclick="selectFormat('google_sheets')">
+                        <input type="radio" name="format" value="google_sheets" id="format_google_sheets">
+                        <label for="format_google_sheets">
+                            <span class="format-icon">📊</span>
+                            <div>
+                                Google Sheets
+                                <div class="format-desc">Exporta CSV para importar</div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Filtros de Data -->
+            <div class="form-section">
+                <h3>Período (opcional)</h3>
+                <div class="date-filters">
+                    <div class="date-group">
+                        <label for="start_date">Data Inicial</label>
+                        <input type="date" name="start_date" id="start_date">
+                    </div>
+                    <div class="date-group">
+                        <label for="end_date">Data Final</label>
+                        <input type="date" name="end_date" id="end_date">
+                    </div>
+                </div>
+                <p style="font-size: 12px; color: #999; margin-top: 10px;">
+                    * Deixe em branco para exportar todos os leads
+                </p>
+            </div>
+
+            <!-- Botões -->
+            <div class="form-section">
+                <button type="submit" class="btn-export">
+                    ⬇️ Baixar Exportação
+                </button>
+                <button type="button" class="btn-cancel" onclick="window.history.back()">
+                    Cancelar
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function selectFormat(format) {
+    document.getElementById('format_' + format).checked = true;
+
+    // Remove active class from all cards
+    document.querySelectorAll('.format-card').forEach(card => {
+        card.style.borderColor = '#e0e0e0';
+        card.style.background = 'white';
+    });
+
+    // Add active class to selected card
+    const selectedCard = document.getElementById('format_' + format).closest('.format-card');
+    selectedCard.style.borderColor = '#667eea';
+    selectedCard.style.background = 'linear-gradient(135deg, rgba(102, 126, 234, 0.05) 0%, rgba(118, 75, 162, 0.05) 100%)';
+}
+
+// Initialize first card as selected
+document.addEventListener('DOMContentLoaded', function() {
+    selectFormat('csv');
+});
+</script>
+{% endblock %}
