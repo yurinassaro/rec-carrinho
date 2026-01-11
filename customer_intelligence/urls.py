@@ -10,6 +10,11 @@ from django.http import JsonResponse
 from rest_framework import routers
 from customers.views import CustomerViewSet
 
+# Configurar nome do Admin
+admin.site.site_header = 'Carrinho e Leads'
+admin.site.site_title = 'Carrinho e Leads'
+admin.site.index_title = 'Painel de Administracao'
+
 
 def health_check(request):
     """Health check endpoint para Docker/Load Balancer"""

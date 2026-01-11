@@ -503,13 +503,17 @@ async function startImport() {
     
     // Guardar estatísticas iniciais
     await loadStats(true);
-    
-    // Mostrar seção de progresso
-    document.getElementById('progressSection').classList.add('active');
+
+    // LIMPAR resultado anterior e mostrar progresso
     document.getElementById('resultSection').classList.remove('active');
-    
-    // Resetar progresso
+    document.getElementById('resultSection').classList.remove('error');
+    document.getElementById('progressSection').classList.add('active');
+
+    // Resetar progresso e contadores
     updateProgress(0, 'Iniciando importação...');
+    document.getElementById('currentCount').textContent = '0';
+    document.getElementById('totalCount').textContent = '0';
+    document.getElementById('statusText').textContent = 'Iniciando';
     
     try {
         // Fazer requisição POST
@@ -650,18 +654,16 @@ function updateProgress(percentage, message) {
 
 // Mostrar sucesso
 function showSuccess(data) {
+    // Esconder progresso IMEDIATAMENTE
+    document.getElementById('progressSection').classList.remove('active');
+
     const resultSection = document.getElementById('resultSection');
     resultSection.classList.add('active');
     resultSection.classList.remove('error');
-    
+
     document.getElementById('resultIcon').textContent = '✅';
     document.getElementById('resultTitle').innerHTML = '<span>✅</span> Importação Concluída com Sucesso!';
     document.getElementById('resultMessage').textContent = data.message || 'Todos os dados foram importados com sucesso.';
-    
-    // Esconder progresso após 2 segundos
-    setTimeout(() => {
-        document.getElementById('progressSection').classList.remove('active');
-    }, 2000);
 }
 
 // Mostrar erro
