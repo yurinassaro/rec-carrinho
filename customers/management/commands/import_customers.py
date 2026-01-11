@@ -808,13 +808,17 @@ class Command(BaseCommand):
     
     # BUSCANDO TELEFONE DOS CLIENTES
     def analyze_customers(self):
-        """Análise inteligente de clientes"""
-        
+        """Análise inteligente de clientes - OTIMIZADA por empresa"""
+
         self.stdout.write('🧠 Executando análise inteligente...')
-        
+
         from django.db.models import Sum, Count
-        
-        for customer in Customer.objects.all():
+
+        # Só processar clientes da empresa atual
+        customers = Customer.objects.filter(empresa=self.empresa)
+        self.stdout.write(f'  📊 Analisando {customers.count()} clientes da {self.empresa.nome}...')
+
+        for customer in customers:
             # Atualizar estatísticas de pedidos
             orders = customer.orders.filter(status__in=['wc-completed', 'wc-processing'])
             customer.total_orders = customer.orders.count()
@@ -876,13 +880,13 @@ class Command(BaseCommand):
             customer.save()
         
         self.stdout.write(self.style.SUCCESS('✅ Importação e análise concluídas!'))
-        
-        # Estatísticas finais
+
+        # Estatísticas finais - FILTRADAS POR EMPRESA
         stats = {
-            'total': Customer.objects.count(),
-            'never_bought': Customer.objects.filter(status='never_bought').count(),
-            'abandoned_only': Customer.objects.filter(status='abandoned_only').count(),
-            'active': Customer.objects.filter(status__in=['first_time', 'returning', 'vip']).count(),
+            'total': customers.count(),
+            'never_bought': customers.filter(status='never_bought').count(),
+            'abandoned_only': customers.filter(status='abandoned_only').count(),
+            'active': customers.filter(status__in=['first_time', 'returning', 'vip']).count(),
         }
         
         self.stdout.write(f"""
@@ -1185,72 +1189,102 @@ class Command(BaseCommand):
         """
         Função: check_and_update_recovered_carts
         Descrição: Verifica carrinhos abandonados e marca como recuperados se houve compra em 30 dias
-        Lógica: 
+        Lógica OTIMIZADA:
+            - Cruza por EMAIL (customer) primeiro
+            - Se não achar, cruza por TELEFONE
+            - Só processa carrinhos da empresa atual
             - Carrinho + Pedido em até 30 dias = RECUPERADO
-            - Carrinho + 30 dias sem pedido = PERMANECE ABANDONADO
-            - Atualiza automaticamente durante importação
         """
-        
+
         self.stdout.write('\n🔄 Verificando recuperação de carrinhos abandonados...')
-        
+
         from django.db.models import Q
         from datetime import timedelta
-        
-        # Buscar todos os carrinhos com status abandoned
+
+        # Buscar carrinhos APENAS da empresa atual que não foram recuperados
         abandoned_carts = Cart.objects.filter(
-            Q(status='abandoned') | Q(status='active'),
+            empresa=self.empresa,
             was_recovered=False
-        )
-        
-        self.stdout.write(f'  📦 Analisando {abandoned_carts.count()} carrinhos...')
-        
+        ).filter(
+            Q(status='abandoned') | Q(status='active')
+        ).select_related('customer')
+
+        self.stdout.write(f'  📦 Analisando {abandoned_carts.count()} carrinhos da {self.empresa.nome}...')
+
         recovered_count = 0
+        recovered_by_phone = 0
         still_abandoned = 0
         waiting_count = 0
-        
+
         for cart in abandoned_carts:
-            # Janela de 30 dias para recuperação
+            # Janela de recuperação: 2 dias ANTES até 30 dias DEPOIS
+            window_start = cart.created_at - timedelta(days=2)
             window_end = cart.created_at + timedelta(days=30)
-            
-            # Buscar pedido do cliente após o carrinho
+
+            recovery_order = None
+            match_type = None
+
+            # 1. Primeiro: Buscar pedido do MESMO CLIENTE (por email)
             recovery_order = Order.objects.filter(
+                empresa=self.empresa,
                 customer=cart.customer,
-                created_at__gt=cart.created_at,
-                created_at__lte=window_end,
+                created_at__gte=window_start,  # 2 dias antes
+                created_at__lte=window_end,     # 30 dias depois
                 status__in=['wc-completed', 'wc-processing', 'wc-on-hold']
             ).order_by('created_at').first()
-            
+
+            if recovery_order:
+                match_type = 'email'
+
+            # 2. Se não achou por email, tentar por TELEFONE
+            if not recovery_order and cart.customer.phone:
+                phone = cart.customer.phone.strip()
+                if len(phone) >= 8:  # Telefone válido
+                    # Buscar pedido de qualquer cliente com mesmo telefone
+                    recovery_order = Order.objects.filter(
+                        empresa=self.empresa,
+                        customer__phone=phone,
+                        created_at__gte=window_start,  # 2 dias antes
+                        created_at__lte=window_end,     # 30 dias depois
+                        status__in=['wc-completed', 'wc-processing', 'wc-on-hold']
+                    ).order_by('created_at').first()
+
+                    if recovery_order:
+                        match_type = 'telefone'
+
             if recovery_order:
                 # RECUPERADO!
                 days_to_recover = (recovery_order.created_at - cart.created_at).days
-                
+
                 cart.status = 'recovered'
                 cart.was_recovered = True
                 cart.recovered_order = recovery_order
                 cart.recovered_at = recovery_order.created_at
                 cart.recovery_value = recovery_order.total
                 cart.save()
-                
+
                 recovered_count += 1
-                
+                if match_type == 'telefone':
+                    recovered_by_phone += 1
+
                 # Se recuperou, atualizar status do cliente
                 if cart.customer.status == 'abandoned_only':
                     cart.customer.status = 'first_time'
                     cart.customer.save()
-                
+
                 self.stdout.write(
                     self.style.SUCCESS(
-                        f'    ✅ {cart.customer.email}: Recuperado em {days_to_recover} dias'
+                        f'    ✅ {cart.customer.email}: Recuperado em {days_to_recover} dias (por {match_type})'
                     )
                 )
-            
+
             elif timezone.now() > window_end:
                 # Passou de 30 dias - definitivamente abandonado
                 cart.status = 'abandoned'
                 cart.was_recovered = False
                 cart.save()
                 still_abandoned += 1
-                
+
             else:
                 # Ainda dentro da janela de 30 dias
                 days_remaining = (window_end - timezone.now()).days
@@ -1264,12 +1298,12 @@ class Command(BaseCommand):
         self.stdout.write(
             self.style.SUCCESS(
                 f'\n📊 Resultado da Verificação:\n'
-                f'  ✅ Recuperados: {recovered_count}\n'
+                f'  ✅ Recuperados: {recovered_count} (por telefone: {recovered_by_phone})\n'
                 f'  ❌ Abandonados definitivos: {still_abandoned}\n'
                 f'  ⏳ Aguardando (dentro de 30 dias): {waiting_count}'
             )
         )
-        
+
         # Taxa de recuperação
         total_finalizados = recovered_count + still_abandoned
         if total_finalizados > 0:
