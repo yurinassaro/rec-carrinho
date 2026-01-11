@@ -279,6 +279,88 @@
         line-height: 1.6;
     }
 
+    /* Result Section */
+    .result-section {
+        display: none;
+        background: white;
+        border-radius: 15px;
+        padding: 30px;
+        margin-bottom: 30px;
+        box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+        border-left: 5px solid #22c55e;
+    }
+
+    .result-section.active {
+        display: block;
+    }
+
+    .result-section.error {
+        border-left-color: #ef4444;
+        background: #fef2f2;
+    }
+
+    .result-title {
+        font-size: 22px;
+        font-weight: bold;
+        color: #22c55e;
+        margin-bottom: 15px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .result-section.error .result-title {
+        color: #ef4444;
+    }
+
+    .result-message {
+        color: #333;
+        margin-bottom: 20px;
+        font-size: 16px;
+    }
+
+    .result-section.error .result-message {
+        color: #991b1b;
+    }
+
+    .result-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 15px;
+    }
+
+    .result-stat-card {
+        background: #f8f9fa;
+        border-radius: 10px;
+        padding: 20px;
+        text-align: center;
+        transition: transform 0.3s;
+    }
+
+    .result-stat-card:hover {
+        transform: translateY(-3px);
+    }
+
+    .result-stat-label {
+        font-size: 12px;
+        color: #888;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 8px;
+        font-weight: 600;
+    }
+
+    .result-stat-value {
+        font-size: 32px;
+        font-weight: 700;
+        line-height: 1;
+    }
+
+    .result-stat-card:nth-child(1) .result-stat-value { color: #667eea; }
+    .result-stat-card:nth-child(2) .result-stat-value { color: #22c55e; }
+    .result-stat-card:nth-child(3) .result-stat-value { color: #fbbf24; }
+    .result-stat-card:nth-child(4) .result-stat-value { color: #06b6d4; }
+
     .loading-spinner {
         display: inline-block;
         width: 20px;
@@ -403,6 +485,35 @@
             <pre id="outputContent"></pre>
         </div>
     </div>
+
+    <!-- Result Section -->
+    <div class="result-section" id="resultSection">
+        <div class="result-title" id="resultTitle">
+            <span id="resultIcon"></span>
+            <span id="resultTitleText">Importacao Concluida!</span>
+        </div>
+        <div class="result-message" id="resultMessage">
+            <!-- Mensagem sera preenchida dinamicamente -->
+        </div>
+        <div class="result-stats" id="resultStats">
+            <div class="result-stat-card">
+                <div class="result-stat-label">Total Encontrados</div>
+                <div class="result-stat-value" id="resultTotal">0</div>
+            </div>
+            <div class="result-stat-card">
+                <div class="result-stat-label">Novos Leads</div>
+                <div class="result-stat-value" id="resultNovos">0</div>
+            </div>
+            <div class="result-stat-card">
+                <div class="result-stat-label">Ja Sao Clientes</div>
+                <div class="result-stat-value" id="resultClientes">0</div>
+            </div>
+            <div class="result-stat-card">
+                <div class="result-stat-label">Taxa de Conversao</div>
+                <div class="result-stat-value" id="resultTaxa">0%</div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -486,6 +597,11 @@ function startImport() {
     btn.disabled = true;
     btn.innerHTML = '<span class="loading-spinner"></span> <span>Importando TODOS os leads...</span>';
 
+    // Limpar resultado anterior
+    document.getElementById('resultSection').classList.remove('active');
+    document.getElementById('resultSection').classList.remove('error');
+    document.getElementById('outputSection').classList.remove('active');
+
     // Mostrar seção de progresso
     const progressSection = document.getElementById('progressSection');
     progressSection.classList.add('active');
@@ -533,34 +649,64 @@ function monitorImportProgress(taskId, btn) {
                     btn.innerHTML = '<span>🚀</span> <span>Importar Leads</span>';
                     loadStats();
 
-                    // Mostrar output
-                    if (data.output) {
-                        document.getElementById('outputSection').classList.add('active');
-                        document.getElementById('outputContent').textContent = data.output;
-                    } else {
-                        const stats = data.stats || {};
-                        document.getElementById('outputSection').classList.add('active');
-                        document.getElementById('outputContent').textContent =
-                            'Importação concluída!\n\n' +
-                            `Total de leads: ${stats.total || 0}\n` +
-                            `Leads importados: ${stats.importados || 0}\n` +
-                            `Novos leads: ${stats.novos || 0}\n` +
-                            `Leads já clientes: ${stats.ja_clientes || 0}`;
-                    }
+                    // Esconder progresso e mostrar resultado formatado
+                    document.getElementById('progressSection').classList.remove('active');
+                    showSuccess(data);
                 } else if (data.status === 'erro') {
                     clearInterval(checkInterval);
                     btn.disabled = false;
                     btn.innerHTML = '<span>🚀</span> <span>Importar Leads</span>';
 
-                    document.getElementById('outputSection').classList.add('active');
-                    document.getElementById('outputContent').textContent =
-                        'Erro na importação:\n\n' + (data.error || data.message);
+                    // Esconder progresso e mostrar erro
+                    document.getElementById('progressSection').classList.remove('active');
+                    showError(data.error || data.message);
                 }
             })
             .catch(error => {
                 console.error('Erro ao verificar status:', error);
             });
     }, 1000); // Verificar a cada 1 segundo
+}
+
+// Mostrar sucesso com estatísticas formatadas
+function showSuccess(data) {
+    const resultSection = document.getElementById('resultSection');
+    resultSection.classList.add('active');
+    resultSection.classList.remove('error');
+
+    document.getElementById('resultIcon').textContent = '✅';
+    document.getElementById('resultTitleText').textContent = 'Importacao Concluida com Sucesso!';
+    document.getElementById('resultMessage').textContent = data.message || 'Todos os leads foram importados com sucesso.';
+
+    // Preencher estatísticas
+    const stats = data.stats || {};
+    document.getElementById('resultTotal').textContent = stats.total_encontrados || 0;
+    document.getElementById('resultNovos').textContent = stats.novos_leads || 0;
+    document.getElementById('resultClientes').textContent = stats.ja_clientes || 0;
+    document.getElementById('resultTaxa').textContent = (stats.taxa_clientes || 0).toFixed(1) + '%';
+
+    // Scroll para o resultado
+    resultSection.scrollIntoView({ behavior: 'smooth' });
+}
+
+// Mostrar erro
+function showError(message) {
+    const resultSection = document.getElementById('resultSection');
+    resultSection.classList.add('active');
+    resultSection.classList.add('error');
+
+    document.getElementById('resultIcon').textContent = '❌';
+    document.getElementById('resultTitleText').textContent = 'Erro na Importacao';
+    document.getElementById('resultMessage').textContent = message;
+
+    // Limpar estatísticas em caso de erro
+    document.getElementById('resultTotal').textContent = '-';
+    document.getElementById('resultNovos').textContent = '-';
+    document.getElementById('resultClientes').textContent = '-';
+    document.getElementById('resultTaxa').textContent = '-';
+
+    // Scroll para o resultado
+    resultSection.scrollIntoView({ behavior: 'smooth' });
 }
 
 // Atualizar barra de progresso

@@ -185,6 +185,91 @@ def import_customers_task(self, task_id, start_date, end_date, import_type, empr
         return {'status': 'error', 'error': str(e)}
 
 
+class LeadsProgressWriter:
+    """Wrapper que captura output e atualiza progresso para importação de leads"""
+    def __init__(self, task_id):
+        self.task_id = task_id
+        self.buffer = StringIO()
+        self.progress = 10
+        # Contadores para resumo final
+        self.stats = {
+            'novos_leads': 0,
+            'ja_clientes': 0,
+            'atualizados': 0,
+            'total_encontrados': 0,
+            'taxa_clientes': 0.0,
+        }
+
+    def write(self, msg):
+        self.buffer.write(msg)
+
+        import re
+
+        # Capturar total de leads encontrados
+        match = re.search(r'Encontrados (\d+) leads', msg)
+        if match:
+            self.stats['total_encontrados'] = int(match.group(1))
+            self._update(30, f'Encontrados {self.stats["total_encontrados"]} leads...')
+            return
+
+        # Capturar novos leads
+        match = re.search(r'Novos leads: (\d+)', msg)
+        if match:
+            self.stats['novos_leads'] = int(match.group(1))
+
+        # Capturar já são clientes
+        match = re.search(r'J[áa] s[ãa]o clientes: (\d+)', msg)
+        if match:
+            self.stats['ja_clientes'] = int(match.group(1))
+
+        # Capturar atualizados
+        match = re.search(r'Atualizados: (\d+)', msg)
+        if match:
+            self.stats['atualizados'] = int(match.group(1))
+
+        # Capturar taxa de clientes
+        match = re.search(r'Taxa de clientes: ([\d.]+)%', msg)
+        if match:
+            self.stats['taxa_clientes'] = float(match.group(1))
+
+        # Atualizar progresso baseado nas mensagens
+        if 'Conectando' in msg or 'Conexão' in msg or 'conectado' in msg.lower():
+            self._update(15, 'Conectando ao banco de dados...')
+        elif 'Prefixo detectado' in msg:
+            self._update(25, 'Estrutura do banco detectada...')
+        elif 'Buscando' in msg and 'leads' in msg:
+            self._update(35, 'Buscando leads no período...')
+        elif 'JÁ É CLIENTE' in msg:
+            # Incrementar progresso gradualmente
+            if self.progress < 85:
+                self.progress += 1
+                self._update(self.progress, 'Processando leads...')
+        elif 'Novo lead' in msg or 'Atualizado' in msg:
+            if self.progress < 85:
+                self.progress += 1
+                self._update(self.progress, 'Importando dados...')
+        elif 'RESUMO' in msg:
+            self._update(95, 'Finalizando...')
+
+    def _update(self, progress, message):
+        self.progress = progress
+        cache.set(f'import_leads_{self.task_id}', {
+            'status': 'processando',
+            'progress': progress,
+            'message': message,
+            'stats': self.stats
+        }, timeout=3600)
+
+    def flush(self):
+        pass
+
+    def getvalue(self):
+        return self.buffer.getvalue()
+
+    def get_stats(self):
+        return self.stats
+
+
 @shared_task(bind=True, max_retries=0)
 def import_leads_task(self, task_id, start_date, end_date, empresa_slug):
     """
@@ -195,12 +280,13 @@ def import_leads_task(self, task_id, start_date, end_date, empresa_slug):
     try:
         cache.set(f'import_leads_{task_id}', {
             'status': 'processando',
-            'progress': 10,
-            'message': 'Conectando ao WooCommerce...',
+            'progress': 5,
+            'message': 'Iniciando importação...',
             'celery_task_id': self.request.id
         }, timeout=3600)
 
-        out = StringIO()
+        # Usar LeadsProgressWriter para capturar estatísticas
+        out = LeadsProgressWriter(task_id)
         call_command(
             'import_leads',
             start_date=start_date,
@@ -210,11 +296,27 @@ def import_leads_task(self, task_id, start_date, end_date, empresa_slug):
         )
 
         output = out.getvalue()
+        stats = out.get_stats()
+
+        # Construir mensagem de resumo
+        resumo_parts = []
+        if stats['novos_leads'] > 0:
+            resumo_parts.append(f"{stats['novos_leads']} novos leads")
+        if stats['ja_clientes'] > 0:
+            resumo_parts.append(f"{stats['ja_clientes']} já são clientes")
+        if stats['atualizados'] > 0:
+            resumo_parts.append(f"{stats['atualizados']} atualizados")
+
+        if resumo_parts:
+            resumo = f"Importados: {', '.join(resumo_parts)}"
+        else:
+            resumo = "Importação concluída (sem novos dados no período)"
 
         cache.set(f'import_leads_{task_id}', {
             'status': 'concluido',
             'progress': 100,
-            'message': 'Importação de leads concluída com sucesso!',
+            'message': resumo,
+            'stats': stats,
             'output': output,
             'celery_task_id': self.request.id
         }, timeout=3600)
@@ -231,7 +333,8 @@ def import_leads_task(self, task_id, start_date, end_date, empresa_slug):
             'progress': 0,
             'message': f'Erro: {str(e)}',
             'error': str(e),
-            'traceback': error_traceback
+            'traceback': error_traceback,
+            'celery_task_id': self.request.id
         }, timeout=3600)
 
         return {'status': 'error', 'error': str(e)}

@@ -99,6 +99,11 @@ class EmpresaAdmin(admin.ModelAdmin):
             'classes': ('collapse',),
             'description': 'Credenciais do banco de dados MySQL do WooCommerce'
         }),
+        ('Form Vibes - Mapeamento de Campos', {
+            'fields': ('fv_field_nome', 'fv_field_whatsapp', 'fv_field_tamanho'),
+            'classes': ('collapse',),
+            'description': 'Configure os nomes dos campos (meta_keys) do Form Vibes para esta empresa'
+        }),
         ('Personalizacao', {
             'fields': ('timezone', 'logo', 'cor_primaria'),
             'classes': ('collapse',),

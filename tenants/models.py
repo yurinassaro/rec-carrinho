@@ -81,6 +81,27 @@ class Empresa(models.Model):
         help_text='Prefixo das tabelas WordPress (ex: wp_)'
     )
 
+    # Configuracao Form Vibes - Mapeamento de campos
+    fv_field_nome = models.CharField(
+        max_length=100,
+        default='Nome_3',
+        verbose_name='Campo Nome',
+        help_text='Nome do meta_key para o campo Nome (ex: Nome_3, Nome)'
+    )
+    fv_field_whatsapp = models.CharField(
+        max_length=100,
+        default='Whatsapp_8',
+        verbose_name='Campo WhatsApp',
+        help_text='Nome do meta_key para WhatsApp (ex: Whatsapp_8, Whatsapp - DDD + Numero)'
+    )
+    fv_field_tamanho = models.CharField(
+        max_length=100,
+        default='Número_do_sapato_9',
+        blank=True,
+        verbose_name='Campo Tamanho/Sapato',
+        help_text='Nome do meta_key para tamanho (ex: Número_do_sapato_9). Deixe vazio se não usar.'
+    )
+
     # Configuracoes visuais
     timezone = models.CharField(max_length=50, default='America/Sao_Paulo')
     logo = models.ImageField(
