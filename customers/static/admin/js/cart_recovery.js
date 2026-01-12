@@ -26,7 +26,7 @@ function toggleRecovery(cartId, type, newStatus) {
     });
 }
 
-function openWhatsApp(phone, cartId, nome) {
+function openWhatsApp(phone, cartId, nome, msgTemplate) {
     // Prevenir comportamento padrão
     event.preventDefault();
     event.stopPropagation();
@@ -34,9 +34,9 @@ function openWhatsApp(phone, cartId, nome) {
     // Salvar posição do scroll
     const scrollPos = window.scrollY || window.pageYOffset;
 
-    const mensagem = encodeURIComponent(
-        `Olá ${nome}, tudo bem ??`
-    );
+    // Usar template configurado ou mensagem padrão
+    const msgText = (msgTemplate || 'Olá {nome}, tudo bem ??').replace('{nome}', nome);
+    const mensagem = encodeURIComponent(msgText);
     
     const csrfToken = getCookie('csrftoken');
     

@@ -225,7 +225,7 @@ class CartAdmin(TenantAdminMixin, admin.ModelAdmin):
         """Botão toggle para marcar envio de WhatsApp"""
         if not obj.customer.whatsapp_number:
             return format_html('<span style="color: #999;">Sem WhatsApp</span>')
-        
+
         if obj.recovery_whatsapp_sent:
             btn_color = '#25D366'
             btn_text = '✅ WhatsApp Enviado'
@@ -237,9 +237,14 @@ class CartAdmin(TenantAdminMixin, admin.ModelAdmin):
             btn_color = '#999'
             btn_text = '❌ Não Enviado'
             date_text = ''
-        
+
         # Mensagem personalizada com nome do cliente
         primeiro_nome = obj.customer.first_name.split()[0] if obj.customer.first_name else "tudo"
+
+        # Pegar mensagem configurada da empresa
+        msg_template = 'Olá {nome}, tudo bem ??'
+        if obj.empresa and hasattr(obj.empresa, 'msg_whatsapp_cart'):
+            msg_template = obj.empresa.msg_whatsapp_cart or msg_template
 
         return format_html(
             '''
@@ -251,7 +256,7 @@ class CartAdmin(TenantAdminMixin, admin.ModelAdmin):
                     <div>{}</div>
                     {}
                 </button>
-                <button onclick="openWhatsApp('{}', '{}', '{}')"
+                <button onclick="openWhatsApp('{}', '{}', '{}', '{}')"
                         style="background: #25D366; color: white; border: none;
                             padding: 8px; border-radius: 4px; cursor: pointer;
                             font-size: 16px;" title="Abrir WhatsApp">
@@ -266,7 +271,8 @@ class CartAdmin(TenantAdminMixin, admin.ModelAdmin):
             format_html(date_text) if date_text else '',
             obj.customer.whatsapp_number,
             obj.id,
-            primeiro_nome
+            primeiro_nome,
+            msg_template.replace("'", "\\'")
         )
     whatsapp_toggle.short_description = '📱 WhatsApp'
     whatsapp_toggle.allow_tags = True
@@ -434,11 +440,17 @@ class LeadAdmin(TenantAdminMixin, admin.ModelAdmin):
         if not obj.whatsapp_formatted:
             return '-'
 
-        # Mensagem padrão com nome do cliente: "Olá [Nome], tudo bem ??"
+        # Mensagem configurada da empresa
         import urllib.parse
         # Pegar apenas o primeiro nome
         primeiro_nome = obj.nome.split()[0] if obj.nome else "tudo"
-        mensagem = f"Olá {primeiro_nome}, tudo bem ??"
+
+        # Pegar mensagem configurada da empresa
+        msg_template = 'Olá {nome}, tudo bem ??'
+        if obj.empresa and hasattr(obj.empresa, 'msg_whatsapp_lead'):
+            msg_template = obj.empresa.msg_whatsapp_lead or msg_template
+
+        mensagem = msg_template.replace('{nome}', primeiro_nome)
         msg_encoded = urllib.parse.quote(mensagem)
         whatsapp_url = f"whatsapp://send?phone={obj.whatsapp_formatted}&text={msg_encoded}"
 

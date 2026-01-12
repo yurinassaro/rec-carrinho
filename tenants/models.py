@@ -102,6 +102,18 @@ class Empresa(models.Model):
         help_text='Nome do meta_key para tamanho (ex: Número_do_sapato_9). Deixe vazio se não usar.'
     )
 
+    # Mensagens WhatsApp personalizadas
+    msg_whatsapp_lead = models.TextField(
+        default='Olá {nome}, tudo bem ??',
+        verbose_name='Mensagem WhatsApp - Leads',
+        help_text='Mensagem padrão para leads. Use {nome} para inserir o nome do lead.'
+    )
+    msg_whatsapp_cart = models.TextField(
+        default='Olá {nome}, tudo bem ??',
+        verbose_name='Mensagem WhatsApp - Carrinho',
+        help_text='Mensagem padrão para recuperação de carrinho. Use {nome} para inserir o nome do cliente.'
+    )
+
     # Configuracoes visuais
     timezone = models.CharField(max_length=50, default='America/Sao_Paulo')
     logo = models.ImageField(

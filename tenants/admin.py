@@ -104,6 +104,10 @@ class EmpresaAdmin(admin.ModelAdmin):
             'classes': ('collapse',),
             'description': 'Configure os nomes dos campos (meta_keys) do Form Vibes para esta empresa'
         }),
+        ('Mensagens WhatsApp', {
+            'fields': ('msg_whatsapp_lead', 'msg_whatsapp_cart'),
+            'description': 'Configure as mensagens padrão do WhatsApp. Use {nome} para inserir o nome do cliente.'
+        }),
         ('Personalizacao', {
             'fields': ('timezone', 'logo', 'cor_primaria'),
             'classes': ('collapse',),
