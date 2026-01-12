@@ -76,7 +76,7 @@ class EmpresaUsuarioInline(admin.TabularInline):
 
 @admin.register(Empresa)
 class EmpresaAdmin(admin.ModelAdmin):
-    """Admin para gerenciar empresas (apenas superusers)"""
+    """Admin para gerenciar empresas"""
     list_display = ['nome', 'slug', 'dominio', 'plano', 'ativo', 'has_woo_config', 'created_at']
     list_filter = ['ativo', 'plano']
     search_fields = ['nome', 'slug', 'dominio']
@@ -84,7 +84,8 @@ class EmpresaAdmin(admin.ModelAdmin):
     readonly_fields = ['created_at', 'updated_at']
     inlines = [EmpresaUsuarioInline]
 
-    fieldsets = (
+    # Fieldsets completos para superusers
+    fieldsets_superuser = (
         ('Identificacao', {
             'fields': ('nome', 'slug', 'dominio', 'ativo', 'plano')
         }),
@@ -118,22 +119,72 @@ class EmpresaAdmin(admin.ModelAdmin):
         }),
     )
 
+    # Fieldsets limitados para usuarios normais (apenas mensagens WhatsApp)
+    fieldsets_user = (
+        ('Informacoes da Empresa', {
+            'fields': ('nome',),
+            'description': 'Informacoes basicas da sua empresa'
+        }),
+        ('Mensagens WhatsApp', {
+            'fields': ('msg_whatsapp_lead', 'msg_whatsapp_cart'),
+            'description': 'Configure as mensagens padrão do WhatsApp. Use {nome} para inserir o nome do cliente.'
+        }),
+    )
+
+    def get_fieldsets(self, request, obj=None):
+        """Retorna fieldsets baseado no tipo de usuario"""
+        if request.user.is_superuser:
+            return self.fieldsets_superuser
+        return self.fieldsets_user
+
+    def get_readonly_fields(self, request, obj=None):
+        """Usuarios normais so podem editar mensagens WhatsApp"""
+        if request.user.is_superuser:
+            return ['created_at', 'updated_at']
+        # Usuarios normais: nome eh readonly
+        return ['nome', 'created_at', 'updated_at']
+
+    def get_queryset(self, request):
+        """Usuarios normais so veem sua propria empresa"""
+        qs = super().get_queryset(request)
+        if request.user.is_superuser:
+            return qs
+        # Filtrar apenas empresas do usuario
+        return qs.filter(usuarios__usuario=request.user)
+
+    def get_inlines(self, request, obj=None):
+        """Esconder inlines para usuarios normais"""
+        if request.user.is_superuser:
+            return [EmpresaUsuarioInline]
+        return []
+
     def has_woo_config(self, obj):
         return obj.has_woocommerce_config
     has_woo_config.boolean = True
     has_woo_config.short_description = 'WooCommerce'
 
     def has_module_permission(self, request):
-        return request.user.is_superuser
+        """Superusers ou usuarios vinculados a alguma empresa"""
+        if request.user.is_superuser:
+            return True
+        return EmpresaUsuario.objects.filter(usuario=request.user).exists()
 
     def has_view_permission(self, request, obj=None):
-        return request.user.is_superuser
+        if request.user.is_superuser:
+            return True
+        if obj is None:
+            return EmpresaUsuario.objects.filter(usuario=request.user).exists()
+        return EmpresaUsuario.objects.filter(usuario=request.user, empresa=obj).exists()
 
     def has_add_permission(self, request):
         return request.user.is_superuser
 
     def has_change_permission(self, request, obj=None):
-        return request.user.is_superuser
+        if request.user.is_superuser:
+            return True
+        if obj is None:
+            return EmpresaUsuario.objects.filter(usuario=request.user).exists()
+        return EmpresaUsuario.objects.filter(usuario=request.user, empresa=obj).exists()
 
     def has_delete_permission(self, request, obj=None):
         return request.user.is_superuser
