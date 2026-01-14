@@ -246,6 +246,9 @@ class CartAdmin(TenantAdminMixin, admin.ModelAdmin):
         if obj.empresa and hasattr(obj.empresa, 'msg_whatsapp_cart'):
             msg_template = obj.empresa.msg_whatsapp_cart or msg_template
 
+        # Escapar caracteres especiais para JavaScript
+        msg_escaped = msg_template.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "")
+
         return format_html(
             '''
             <div style="display: flex; align-items: center; gap: 5px;">
@@ -272,7 +275,7 @@ class CartAdmin(TenantAdminMixin, admin.ModelAdmin):
             obj.customer.whatsapp_number,
             obj.id,
             primeiro_nome,
-            msg_template.replace("'", "\\'")
+            msg_escaped
         )
     whatsapp_toggle.short_description = '📱 WhatsApp'
     whatsapp_toggle.allow_tags = True
@@ -450,6 +453,7 @@ class LeadAdmin(TenantAdminMixin, admin.ModelAdmin):
         if obj.empresa and hasattr(obj.empresa, 'msg_whatsapp_lead'):
             msg_template = obj.empresa.msg_whatsapp_lead or msg_template
 
+        # Substituir {nome} e tratar quebras de linha
         mensagem = msg_template.replace('{nome}', primeiro_nome)
         msg_encoded = urllib.parse.quote(mensagem)
         whatsapp_url = f"whatsapp://send?phone={obj.whatsapp_formatted}&text={msg_encoded}"

@@ -80,9 +80,26 @@ class EmpresaAdmin(admin.ModelAdmin):
     list_display = ['nome', 'slug', 'dominio', 'plano', 'ativo', 'has_woo_config', 'created_at']
     list_filter = ['ativo', 'plano']
     search_fields = ['nome', 'slug', 'dominio']
-    prepopulated_fields = {'slug': ('nome',)}
     readonly_fields = ['created_at', 'updated_at']
     inlines = [EmpresaUsuarioInline]
+
+    def get_prepopulated_fields(self, request, obj=None):
+        """Apenas superusers tem prepopulated_fields"""
+        if request.user.is_superuser:
+            return {'slug': ('nome',)}
+        return {}
+
+    def get_list_display(self, request):
+        """Lista simplificada para usuarios normais"""
+        if request.user.is_superuser:
+            return ['nome', 'slug', 'dominio', 'plano', 'ativo', 'has_woo_config', 'created_at']
+        return ['nome']
+
+    def get_list_filter(self, request):
+        """Sem filtros para usuarios normais"""
+        if request.user.is_superuser:
+            return ['ativo', 'plano']
+        return []
 
     # Fieldsets completos para superusers
     fieldsets_superuser = (
