@@ -122,9 +122,14 @@ class EmpresaAdmin(admin.ModelAdmin):
             'classes': ('collapse',),
             'description': 'Configure os nomes dos campos (meta_keys) do Form Vibes para esta empresa'
         }),
+        ('W-API WhatsApp', {
+            'fields': ('wapi_ativo', 'wapi_token', 'wapi_instance'),
+            'description': 'Credenciais da W-API (w-api.app) para envio automático. Cada empresa tem suas próprias credenciais.'
+        }),
         ('Mensagens WhatsApp', {
-            'fields': ('msg_whatsapp_lead', 'msg_whatsapp_cart'),
-            'description': 'Configure as mensagens padrão do WhatsApp. Use {nome} para inserir o nome do cliente.'
+            'fields': ('msg_whatsapp_lead', 'msg_whatsapp_lead_cliente', 'msg_whatsapp_cart',
+                       'msg_whatsapp_pedido_novo', 'msg_whatsapp_pedido_embalado'),
+            'description': 'Configure as mensagens padrão do WhatsApp. Use {nome}, {numero}, {valor}.'
         }),
         ('Personalizacao', {
             'fields': ('timezone', 'logo', 'cor_primaria'),
@@ -136,15 +141,20 @@ class EmpresaAdmin(admin.ModelAdmin):
         }),
     )
 
-    # Fieldsets limitados para usuarios normais (apenas mensagens WhatsApp)
+    # Fieldsets limitados para usuarios normais
     fieldsets_user = (
         ('Informacoes da Empresa', {
             'fields': ('nome',),
             'description': 'Informacoes basicas da sua empresa'
         }),
+        ('W-API WhatsApp', {
+            'fields': ('wapi_ativo', 'wapi_token', 'wapi_instance'),
+            'description': 'Configure suas credenciais da W-API (w-api.app) para envio automático de WhatsApp.'
+        }),
         ('Mensagens WhatsApp', {
-            'fields': ('msg_whatsapp_lead', 'msg_whatsapp_cart'),
-            'description': 'Configure as mensagens padrão do WhatsApp. Use {nome} para inserir o nome do cliente.'
+            'fields': ('msg_whatsapp_lead', 'msg_whatsapp_lead_cliente',
+                       'msg_whatsapp_cart', 'msg_whatsapp_pedido_novo', 'msg_whatsapp_pedido_embalado'),
+            'description': 'Configure as mensagens padrão do WhatsApp. Use {nome}, {numero}, {valor}.'
         }),
     )
 
@@ -164,6 +174,8 @@ class EmpresaAdmin(admin.ModelAdmin):
     def get_queryset(self, request):
         """Usuarios normais so veem sua propria empresa"""
         qs = super().get_queryset(request)
+        if not request.user.is_authenticated:
+            return qs.none()
         if request.user.is_superuser:
             return qs
         # Filtrar apenas empresas do usuario
@@ -182,11 +194,15 @@ class EmpresaAdmin(admin.ModelAdmin):
 
     def has_module_permission(self, request):
         """Superusers ou usuarios vinculados a alguma empresa"""
+        if not request.user.is_authenticated:
+            return True  # Permitir acesso a pagina de login
         if request.user.is_superuser:
             return True
         return EmpresaUsuario.objects.filter(usuario=request.user).exists()
 
     def has_view_permission(self, request, obj=None):
+        if not request.user.is_authenticated:
+            return False
         if request.user.is_superuser:
             return True
         if obj is None:
@@ -197,6 +213,8 @@ class EmpresaAdmin(admin.ModelAdmin):
         return request.user.is_superuser
 
     def has_change_permission(self, request, obj=None):
+        if not request.user.is_authenticated:
+            return False
         if request.user.is_superuser:
             return True
         if obj is None:

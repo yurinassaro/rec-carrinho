@@ -26,20 +26,10 @@ function toggleRecovery(cartId, type, newStatus) {
     });
 }
 
-function openWhatsApp(phone, cartId, nome, msgTemplate) {
-    // Prevenir comportamento padrão
-    event.preventDefault();
-    event.stopPropagation();
-
-    // Salvar posição do scroll
-    const scrollPos = window.scrollY || window.pageYOffset;
-
-    // Usar template configurado ou mensagem padrão
-    const msgText = (msgTemplate || 'Olá {nome}, tudo bem ??').replace('{nome}', nome);
-    const mensagem = encodeURIComponent(msgText);
-    
+function markCartWhatsApp(cartId) {
+    // Marcar WhatsApp como enviado quando clicar no link (fallback desktop)
     const csrfToken = getCookie('csrftoken');
-    
+
     fetch('/admin/customers/cart/toggle-recovery/', {
         method: 'POST',
         headers: {
@@ -55,28 +45,74 @@ function openWhatsApp(phone, cartId, nome, msgTemplate) {
     .then(response => response.json())
     .then(data => {
         if (data.success) {
-            // Atualizar botão sem recarregar
             updateWhatsAppButton(cartId);
-            
-            // Manter posição do scroll
-            window.scrollTo(0, scrollPos);
-            
-            // Abrir WhatsApp
-            const whatsappDesktop = `whatsapp://send?phone=${phone}&text=${mensagem}`;
-            window.location.href = whatsappDesktop;
-            
-            // Fallback para WhatsApp Web após 2 segundos
-            // setTimeout(() => {
-            //     if (!document.hidden) {
-            //         if (confirm('WhatsApp Desktop não encontrado.\n\nDeseja abrir o WhatsApp Web?')) {
-            //             window.open(`https://web.whatsapp.com/send?phone=${phone}&text=${mensagem}`, '_blank');
-            //         }
-            //     }
-            // }, 2000);
         }
     });
-    
-    return false; // Prevenir qualquer ação padrão
+
+    // Não prevenir o comportamento padrão do link
+    return true;
+}
+
+function sendCartWhatsApp(cartId, e) {
+    // Enviar WhatsApp via W-API
+    const csrfToken = getCookie('csrftoken');
+    const btn = (e || window.event).target.closest('button');
+
+    // Feedback visual: loading
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '⏳';
+    btn.disabled = true;
+    btn.style.opacity = '0.6';
+
+    fetch('/admin/customers/cart/send-cart-whatsapp/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify({
+            cart_id: cartId
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            btn.innerHTML = '✅';
+            btn.style.background = '#25D366';
+            btn.style.opacity = '1';
+            updateWhatsAppButton(cartId);
+
+            // Recarregar após 1s para atualizar estado
+            setTimeout(() => {
+                sessionStorage.setItem('scrollPos', window.scrollY || window.pageYOffset);
+                location.reload();
+            }, 1000);
+        } else {
+            btn.innerHTML = '❌';
+            btn.style.background = '#f44336';
+            btn.style.opacity = '1';
+            btn.disabled = false;
+            alert('Erro ao enviar WhatsApp: ' + (data.error || 'Erro desconhecido'));
+
+            setTimeout(() => {
+                btn.innerHTML = originalText;
+                btn.style.background = '#25D366';
+            }, 3000);
+        }
+    })
+    .catch(error => {
+        console.error('Erro:', error);
+        btn.innerHTML = '❌';
+        btn.style.background = '#f44336';
+        btn.style.opacity = '1';
+        btn.disabled = false;
+        alert('Erro de conexão ao enviar WhatsApp');
+
+        setTimeout(() => {
+            btn.innerHTML = originalText;
+            btn.style.background = '#25D366';
+        }, 3000);
+    });
 }
 
 function updateWhatsAppButton(cartId) {

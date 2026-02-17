@@ -222,13 +222,16 @@ class CartAdmin(TenantAdminMixin, admin.ModelAdmin):
     email_toggle.allow_tags = True  # Adicionar esta linha
 
     def whatsapp_toggle(self, obj):
-        """Botão toggle para marcar envio de WhatsApp"""
+        """Botão de status + 3 opções de envio: Web, App, WAPI"""
+        import urllib.parse
+
         if not obj.customer.whatsapp_number:
             return format_html('<span style="color: #999;">Sem WhatsApp</span>')
 
+        # Status atual
         if obj.recovery_whatsapp_sent:
             btn_color = '#25D366'
-            btn_text = '✅ WhatsApp Enviado'
+            btn_text = '✅ Enviado'
             if obj.recovery_whatsapp_date:
                 date_text = f'<br><small style="opacity: 0.8;">{obj.recovery_whatsapp_date.strftime("%d/%m %H:%M")}</small>'
             else:
@@ -238,33 +241,61 @@ class CartAdmin(TenantAdminMixin, admin.ModelAdmin):
             btn_text = '❌ Não Enviado'
             date_text = ''
 
-        # Mensagem personalizada com nome do cliente
+        # Mensagem personalizada
         primeiro_nome = obj.customer.first_name.split()[0] if obj.customer.first_name else "tudo"
-
-        # Pegar mensagem configurada da empresa
         msg_template = 'Olá {nome}, tudo bem ??'
-        if obj.empresa and hasattr(obj.empresa, 'msg_whatsapp_cart'):
-            msg_template = obj.empresa.msg_whatsapp_cart or msg_template
+        if obj.empresa and obj.empresa.msg_whatsapp_cart:
+            msg_template = obj.empresa.msg_whatsapp_cart
+        mensagem = msg_template.replace('{nome}', primeiro_nome)
+        msg_encoded = urllib.parse.quote(mensagem)
 
-        # Escapar caracteres especiais para JavaScript
-        msg_escaped = msg_template.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "")
+        phone = obj.customer.whatsapp_number
+        web_url = f"https://wa.me/{phone}?text={msg_encoded}"
+        app_url = f"whatsapp://send?phone={phone}&text={msg_encoded}"
+
+        # WAPI configurado?
+        wapi_configurado = (obj.empresa and obj.empresa.wapi_token and obj.empresa.wapi_instance)
+        wapi_btn = ''
+        if wapi_configurado:
+            wapi_btn = (
+                f'<button onclick="sendCartWhatsApp({obj.id}, event)"'
+                f' style="background: #075E54; color: white; border: none;'
+                f' padding: 4px 8px; border-radius: 3px; cursor: pointer;'
+                f' font-size: 11px;" title="Enviar via W-API (automático)">'
+                f'📡 WAPI</button>'
+            )
+        else:
+            wapi_btn = (
+                '<span style="color: #ccc; font-size: 10px; padding: 4px;"'
+                ' title="Configure WAPI em Empresas">'
+                '📡 WAPI</span>'
+            )
 
         return format_html(
             '''
-            <div style="display: flex; align-items: center; gap: 5px;">
+            <div style="display: flex; flex-direction: column; gap: 4px; min-width: 150px;">
                 <button onclick="toggleRecovery({}, 'whatsapp', {})"
                         style="background: {}; color: white; border: none;
-                            padding: 8px 12px; border-radius: 4px; cursor: pointer;
-                            font-size: 12px; min-width: 140px; text-align: center;">
+                            padding: 6px 10px; border-radius: 4px; cursor: pointer;
+                            font-size: 11px; text-align: center;">
                     <div>{}</div>
                     {}
                 </button>
-                <button onclick="openWhatsApp('{}', '{}', '{}', '{}')"
-                        style="background: #25D366; color: white; border: none;
-                            padding: 8px; border-radius: 4px; cursor: pointer;
-                            font-size: 16px;" title="Abrir WhatsApp">
-                    📱
-                </button>
+                <div style="display: flex; gap: 3px; justify-content: center;">
+                    <a href="{}" target="_blank" onclick="markCartWhatsApp({})"
+                       style="background: #25D366; color: white; border: none;
+                              padding: 4px 8px; border-radius: 3px; cursor: pointer;
+                              font-size: 11px; text-decoration: none;" title="Abrir WhatsApp Web no navegador">
+                        🌐 Web
+                    </a>
+                    <a href="{}" onclick="markCartWhatsApp({})"
+                       style="background: #128C7E; color: white; border: none;
+                              padding: 4px 8px; border-radius: 3px; cursor: pointer;
+                              font-size: 11px; text-decoration: none;" title="Abrir WhatsApp Desktop">
+                        💻 App
+                    </a>
+                    {}
+                </div>
             </div>
             ''',
             obj.id,
@@ -272,10 +303,9 @@ class CartAdmin(TenantAdminMixin, admin.ModelAdmin):
             btn_color,
             btn_text,
             format_html(date_text) if date_text else '',
-            obj.customer.whatsapp_number,
-            obj.id,
-            primeiro_nome,
-            msg_escaped
+            web_url, obj.id,
+            app_url, obj.id,
+            format_html(wapi_btn)
         )
     whatsapp_toggle.short_description = '📱 WhatsApp'
     whatsapp_toggle.allow_tags = True
@@ -289,6 +319,9 @@ class CartAdmin(TenantAdminMixin, admin.ModelAdmin):
             path('update-cart-status/',
                  self.admin_site.admin_view(self.update_cart_status),
                  name='update_cart_status'),
+            path('send-cart-whatsapp/',
+                 self.admin_site.admin_view(self.send_cart_whatsapp),
+                 name='send_cart_whatsapp'),
         ]
         return custom_urls + urls
     
@@ -328,6 +361,36 @@ class CartAdmin(TenantAdminMixin, admin.ModelAdmin):
             })
 
         return JsonResponse({'success': False})
+
+    @csrf_exempt
+    def send_cart_whatsapp(self, request):
+        """Ajax endpoint para enviar WhatsApp via W-API"""
+        if request.method == 'POST':
+            try:
+                data = json.loads(request.body)
+                cart_id = data.get('cart_id')
+
+                cart = get_object_or_404(Cart, id=cart_id)
+
+                from customers.services.wapi import enviar_whatsapp_cart
+                resultado = enviar_whatsapp_cart(cart, empresa=cart.empresa)
+
+                if resultado['success']:
+                    return JsonResponse({
+                        'success': True,
+                        'message': 'WhatsApp enviado com sucesso!',
+                        'date': timezone.now().strftime('%d/%m %H:%M')
+                    })
+                else:
+                    return JsonResponse({
+                        'success': False,
+                        'error': resultado.get('error', 'Erro desconhecido')
+                    }, status=400)
+
+            except Exception as e:
+                return JsonResponse({'success': False, 'error': str(e)}, status=400)
+
+        return JsonResponse({'success': False, 'error': 'Method not allowed'}, status=405)
 
     @csrf_exempt
     def update_cart_status(self, request):
@@ -440,70 +503,91 @@ class LeadAdmin(TenantAdminMixin, admin.ModelAdmin):
     is_customer_badge.short_description = 'Tipo'
     
     def whatsapp_action(self, obj):
+        """Botão de status + 3 opções: Web, App, WAPI"""
         if not obj.whatsapp_formatted:
             return '-'
 
-        # Mensagem configurada da empresa
         import urllib.parse
-        # Pegar apenas o primeiro nome
         primeiro_nome = obj.nome.split()[0] if obj.nome else "tudo"
 
-        # Pegar mensagem configurada da empresa
         msg_template = 'Olá {nome}, tudo bem ??'
-        if obj.empresa and hasattr(obj.empresa, 'msg_whatsapp_lead'):
-            msg_template = obj.empresa.msg_whatsapp_lead or msg_template
-
-        # Substituir {nome} e tratar quebras de linha
+        if obj.empresa and obj.empresa.msg_whatsapp_lead:
+            msg_template = obj.empresa.msg_whatsapp_lead
         mensagem = msg_template.replace('{nome}', primeiro_nome)
         msg_encoded = urllib.parse.quote(mensagem)
-        whatsapp_url = f"whatsapp://send?phone={obj.whatsapp_formatted}&text={msg_encoded}"
 
+        phone = obj.whatsapp_formatted
+        web_url = f"https://wa.me/{phone}?text={msg_encoded}"
+        app_url = f"whatsapp://send?phone={phone}&text={msg_encoded}"
+
+        # Status
         if obj.whatsapp_sent:
-            date_info = obj.whatsapp_sent_date.strftime("%d/%m %H:%M") if obj.whatsapp_sent_date else ''
-            return format_html(
-                '''
-                <div style="display: flex; align-items: center; gap: 5px;">
-                    <button onclick="toggleLeadWhatsApp({}, false)"
-                            style="background: #25D366; color: white; border: none;
-                                   padding: 8px 12px; border-radius: 4px; cursor: pointer;
-                                   font-size: 12px; min-width: 140px; text-align: center;">
-                        <div>✅ WhatsApp Enviado</div>
-                        <small style="opacity: 0.8;">{}</small>
-                    </button>
-                    <a href="{}"
-                       style="background: #25D366; color: white; border: none;
-                              padding: 8px; border-radius: 4px; cursor: pointer;
-                              font-size: 16px; text-decoration: none; display: inline-block;">
-                        📱
-                    </a>
-                </div>
-                ''',
-                obj.id,
-                date_info,
-                whatsapp_url
+            btn_color = '#25D366'
+            btn_text = '✅ Enviado'
+            date_text = ''
+            if obj.whatsapp_sent_date:
+                date_text = f'<br><small style="opacity: 0.8;">{obj.whatsapp_sent_date.strftime("%d/%m %H:%M")}</small>'
+            new_status = 'false'
+        else:
+            btn_color = '#999'
+            btn_text = '❌ Não Enviado'
+            date_text = ''
+            new_status = 'true'
+
+        # WAPI configurado?
+        wapi_configurado = (obj.empresa and obj.empresa.wapi_token and obj.empresa.wapi_instance)
+        if wapi_configurado:
+            wapi_btn = (
+                f'<button onclick="sendLeadWhatsApp({obj.id}, event)"'
+                f' style="background: #075E54; color: white; border: none;'
+                f' padding: 4px 8px; border-radius: 3px; cursor: pointer;'
+                f' font-size: 11px;" title="Enviar via W-API (automático)">'
+                f'📡 WAPI</button>'
             )
         else:
-            return format_html(
-                '''
-                <div style="display: flex; align-items: center; gap: 5px;">
-                    <button onclick="toggleLeadWhatsApp({}, true)"
-                            style="background: #999; color: white; border: none;
-                                   padding: 8px 12px; border-radius: 4px; cursor: pointer;
-                                   font-size: 12px; min-width: 140px; text-align: center;">
-                        ❌ Não Enviado
-                    </button>
-                    <a href="{}" onclick="setTimeout(() => toggleLeadWhatsApp({}, true), 1000)"
-                       style="background: #25D366; color: white; border: none;
-                              padding: 8px; border-radius: 4px; cursor: pointer;
-                              font-size: 16px; text-decoration: none; display: inline-block;">
-                        📱
-                    </a>
-                </div>
-                ''',
-                obj.id,
-                whatsapp_url,
-                obj.id
+            wapi_btn = (
+                '<span style="color: #ccc; font-size: 10px; padding: 4px;"'
+                ' title="Configure WAPI em Empresas">'
+                '📡 WAPI</span>'
             )
+
+        return format_html(
+            '''
+            <div style="display: flex; flex-direction: column; gap: 4px; min-width: 150px;">
+                <button onclick="toggleLeadWhatsApp({}, {})"
+                        style="background: {}; color: white; border: none;
+                            padding: 6px 10px; border-radius: 4px; cursor: pointer;
+                            font-size: 11px; text-align: center;">
+                    <div>{}</div>
+                    {}
+                </button>
+                <div style="display: flex; gap: 3px; justify-content: center;">
+                    <a href="{}" target="_blank"
+                       onclick="setTimeout(() => toggleLeadWhatsApp({}, true), 1000)"
+                       style="background: #25D366; color: white; border: none;
+                              padding: 4px 8px; border-radius: 3px; cursor: pointer;
+                              font-size: 11px; text-decoration: none;" title="Abrir WhatsApp Web">
+                        🌐 Web
+                    </a>
+                    <a href="{}"
+                       onclick="setTimeout(() => toggleLeadWhatsApp({}, true), 1000)"
+                       style="background: #128C7E; color: white; border: none;
+                              padding: 4px 8px; border-radius: 3px; cursor: pointer;
+                              font-size: 11px; text-decoration: none;" title="Abrir WhatsApp Desktop">
+                        💻 App
+                    </a>
+                    {}
+                </div>
+            </div>
+            ''',
+            obj.id, new_status,
+            btn_color,
+            btn_text,
+            format_html(date_text) if date_text else '',
+            web_url, obj.id,
+            app_url, obj.id,
+            format_html(wapi_btn)
+        )
     whatsapp_action.short_description = 'Ação'
 
     def get_urls(self):
@@ -513,6 +597,9 @@ class LeadAdmin(TenantAdminMixin, admin.ModelAdmin):
             path('toggle-lead-whatsapp/',
                  self.admin_site.admin_view(self.toggle_lead_whatsapp),
                  name='toggle_lead_whatsapp'),
+            path('send-lead-whatsapp/',
+                 self.admin_site.admin_view(self.send_lead_whatsapp),
+                 name='send_lead_whatsapp'),
             path('update-lead-status/',
                  self.admin_site.admin_view(self.update_lead_status),
                  name='update_lead_status'),
@@ -524,6 +611,36 @@ class LeadAdmin(TenantAdminMixin, admin.ModelAdmin):
                  name='export_leads_download'),
         ]
         return custom_urls + urls
+
+    @csrf_exempt
+    def send_lead_whatsapp(self, request):
+        """Ajax endpoint para enviar WhatsApp de lead via W-API"""
+        if request.method == 'POST':
+            try:
+                data = json.loads(request.body)
+                lead_id = data.get('lead_id')
+
+                lead = Lead.objects.get(id=lead_id)
+
+                from customers.services.wapi import enviar_whatsapp_lead
+                resultado = enviar_whatsapp_lead(lead, is_customer=lead.is_customer, empresa=lead.empresa)
+
+                if resultado['success']:
+                    return JsonResponse({
+                        'success': True,
+                        'message': 'WhatsApp enviado com sucesso!',
+                        'date': timezone.now().strftime('%d/%m %H:%M')
+                    })
+                else:
+                    return JsonResponse({
+                        'success': False,
+                        'error': resultado.get('error', 'Erro desconhecido')
+                    }, status=400)
+
+            except Exception as e:
+                return JsonResponse({'success': False, 'error': str(e)}, status=400)
+
+        return JsonResponse({'success': False, 'error': 'Method not allowed'}, status=405)
 
     @csrf_exempt
     def toggle_lead_whatsapp(self, request):

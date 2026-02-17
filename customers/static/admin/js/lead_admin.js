@@ -44,6 +44,57 @@ function toggleLeadWhatsApp(leadId, newStatus) {
     });
 }
 
+function sendLeadWhatsApp(leadId, e) {
+    // Enviar WhatsApp de lead via W-API
+    const csrfToken = getCookie('csrftoken');
+    const btn = (e || window.event).target.closest('button');
+
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '⏳';
+    btn.disabled = true;
+    btn.style.opacity = '0.6';
+
+    fetch('/admin/customers/lead/send-lead-whatsapp/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify({ lead_id: leadId })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            btn.innerHTML = '✅';
+            btn.style.background = '#25D366';
+            btn.style.opacity = '1';
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            btn.innerHTML = '❌';
+            btn.style.background = '#f44336';
+            btn.style.opacity = '1';
+            btn.disabled = false;
+            alert('Erro ao enviar WhatsApp: ' + (data.error || 'Erro desconhecido'));
+            setTimeout(() => {
+                btn.innerHTML = originalText;
+                btn.style.background = '#075E54';
+            }, 3000);
+        }
+    })
+    .catch(error => {
+        console.error('Erro:', error);
+        btn.innerHTML = '❌';
+        btn.style.background = '#f44336';
+        btn.style.opacity = '1';
+        btn.disabled = false;
+        alert('Erro de conexão ao enviar WhatsApp');
+        setTimeout(() => {
+            btn.innerHTML = originalText;
+            btn.style.background = '#075E54';
+        }, 3000);
+    });
+}
+
 // Adicionar event listeners para os dropdowns de status
 document.addEventListener('DOMContentLoaded', function() {
     // Selecionar todos os dropdowns de status
