@@ -155,6 +155,26 @@ class Empresa(models.Model):
         verbose_name='Mensagem WhatsApp - Pedido Embalado',
         help_text='Mensagem quando pedido é embalado. Use {nome}, {numero}.'
     )
+    msg_whatsapp_pedido_processando = models.TextField(
+        default='Olá {nome}! Seu pagamento do pedido #{numero} foi confirmado! Estamos preparando seu pedido.',
+        verbose_name='Mensagem WhatsApp - Pedido Processando',
+        help_text='Mensagem quando pagamento é confirmado. Use {nome}, {numero}, {valor}.'
+    )
+    msg_whatsapp_pedido_transito = models.TextField(
+        default='Olá {nome}! Seu pedido #{numero} está em trânsito! Acompanhe pelo código de rastreio no seu email.',
+        verbose_name='Mensagem WhatsApp - Pedido em Trânsito',
+        help_text='Mensagem quando pedido está em trânsito. Use {nome}, {numero}, {valor}.'
+    )
+    msg_whatsapp_pedido_concluido = models.TextField(
+        default='Olá {nome}! Seu pedido #{numero} foi entregue! Esperamos que goste. Qualquer dúvida estamos à disposição.',
+        verbose_name='Mensagem WhatsApp - Pedido Concluído',
+        help_text='Mensagem quando pedido é entregue. Use {nome}, {numero}, {valor}.'
+    )
+    msg_whatsapp_pedido_cancelado = models.TextField(
+        default='Olá {nome}, seu pedido #{numero} foi cancelado. Se precisar de ajuda, estamos à disposição.',
+        verbose_name='Mensagem WhatsApp - Pedido Cancelado',
+        help_text='Mensagem quando pedido é cancelado. Use {nome}, {numero}, {valor}.'
+    )
 
     # Configuracoes visuais
     timezone = models.CharField(max_length=50, default='America/Sao_Paulo')

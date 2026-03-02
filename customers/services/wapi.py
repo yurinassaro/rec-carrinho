@@ -236,6 +236,53 @@ def enviar_whatsapp_pedido_novo(customer, order, empresa=None) -> dict:
     return client.enviar_mensagem(telefone, mensagem)
 
 
+STATUS_MSG_MAP = {
+    'processing': 'msg_whatsapp_pedido_processando',
+    'embalado': 'msg_whatsapp_pedido_embalado',
+    'em-transito': 'msg_whatsapp_pedido_transito',
+    'completed': 'msg_whatsapp_pedido_concluido',
+    'cancelled': 'msg_whatsapp_pedido_cancelado',
+}
+
+STATUS_MSG_DEFAULTS = {
+    'processing': 'Olá {nome}! Seu pagamento do pedido #{numero} foi confirmado! Estamos preparando seu pedido.',
+    'embalado': 'Olá {nome}! Seu pedido #{numero} já foi embalado e saiu da fábrica! O código de rastreio será enviado para o seu email ainda hoje à noite.',
+    'em-transito': 'Olá {nome}! Seu pedido #{numero} está em trânsito! Acompanhe pelo código de rastreio no seu email.',
+    'completed': 'Olá {nome}! Seu pedido #{numero} foi entregue! Esperamos que goste. Qualquer dúvida estamos à disposição.',
+    'cancelled': 'Olá {nome}, seu pedido #{numero} foi cancelado. Se precisar de ajuda, estamos à disposição.',
+}
+
+
+def enviar_whatsapp_pedido_status(customer, order, status, empresa=None) -> dict:
+    """
+    Envia WhatsApp baseado no status do pedido.
+    Usa o template correspondente da empresa para o status.
+    """
+    if status not in STATUS_MSG_MAP:
+        return {'success': False, 'error': f'Status {status} não tem mensagem configurada'}
+
+    telefone = formatar_telefone(customer.phone)
+    if not telefone:
+        return {'success': False, 'error': 'Cliente sem telefone'}
+
+    nome = customer.first_name or 'Cliente'
+    emp = empresa or customer.empresa
+
+    campo = STATUS_MSG_MAP[status]
+    template = getattr(emp, campo, '') if emp else ''
+    if not template:
+        template = STATUS_MSG_DEFAULTS.get(status, '')
+
+    mensagem = template.replace('{nome}', nome)
+    mensagem = mensagem.replace('{numero}', str(order.order_number or order.order_id))
+    mensagem = mensagem.replace('{valor}', f"R$ {order.total:,.2f}" if order.total else '')
+
+    token = emp.wapi_token if emp and emp.wapi_token else None
+    instance = emp.wapi_instance if emp and emp.wapi_instance else None
+    client = WAPIClient(token=token, instance=instance)
+    return client.enviar_mensagem(telefone, mensagem)
+
+
 def enviar_whatsapp_pedido_embalado(customer, order, empresa=None) -> dict:
     """
     Envia WhatsApp quando pedido muda para 'embalado' no Bling.

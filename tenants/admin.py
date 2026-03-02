@@ -133,7 +133,9 @@ class EmpresaAdmin(admin.ModelAdmin):
         }),
         ('Mensagens WhatsApp', {
             'fields': ('msg_whatsapp_lead', 'msg_whatsapp_lead_cliente', 'msg_whatsapp_cart',
-                       'msg_whatsapp_pedido_novo', 'msg_whatsapp_pedido_embalado'),
+                       'msg_whatsapp_pedido_novo', 'msg_whatsapp_pedido_processando',
+                       'msg_whatsapp_pedido_embalado', 'msg_whatsapp_pedido_transito',
+                       'msg_whatsapp_pedido_concluido', 'msg_whatsapp_pedido_cancelado'),
             'description': 'Configure as mensagens padrão do WhatsApp. Use {nome}, {numero}, {valor}.'
         }),
         ('Personalizacao', {
@@ -162,7 +164,9 @@ class EmpresaAdmin(admin.ModelAdmin):
         }),
         ('Mensagens WhatsApp', {
             'fields': ('msg_whatsapp_lead', 'msg_whatsapp_lead_cliente',
-                       'msg_whatsapp_cart', 'msg_whatsapp_pedido_novo', 'msg_whatsapp_pedido_embalado'),
+                       'msg_whatsapp_cart', 'msg_whatsapp_pedido_novo', 'msg_whatsapp_pedido_processando',
+                       'msg_whatsapp_pedido_embalado', 'msg_whatsapp_pedido_transito',
+                       'msg_whatsapp_pedido_concluido', 'msg_whatsapp_pedido_cancelado'),
             'description': 'Configure as mensagens padrão do WhatsApp. Use {nome}, {numero}, {valor}.'
         }),
     )
