@@ -40,6 +40,10 @@ class CustomerAdmin(TenantAdminMixin, ExportMixin, admin.ModelAdmin):
         ('Identificação', {
             'fields': ('email', 'first_name', 'last_name', 'phone', 'whatsapp_number')
         }),
+        ('Endereço', {
+            'fields': ('billing_address', 'billing_city', 'billing_state', 'billing_postcode'),
+            'classes': ('collapse',),
+        }),
         ('Status e Análise', {
             'fields': ('status', 'score', 'tags', 'notes')
         }),

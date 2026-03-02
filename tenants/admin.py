@@ -117,6 +117,11 @@ class EmpresaAdmin(admin.ModelAdmin):
             'classes': ('collapse',),
             'description': 'Credenciais do banco de dados MySQL do WooCommerce'
         }),
+        ('WooCommerce - Webhook', {
+            'fields': ('woo_webhook_secret',),
+            'classes': ('collapse',),
+            'description': 'Secret para validar webhooks. URL: /webhooks/woo/{slug}/order-created/'
+        }),
         ('Form Vibes - Mapeamento de Campos', {
             'fields': ('fv_field_nome', 'fv_field_whatsapp', 'fv_field_tamanho'),
             'classes': ('collapse',),
@@ -150,6 +155,10 @@ class EmpresaAdmin(admin.ModelAdmin):
         ('W-API WhatsApp', {
             'fields': ('wapi_ativo', 'wapi_token', 'wapi_instance'),
             'description': 'Configure suas credenciais da W-API (w-api.app) para envio automático de WhatsApp.'
+        }),
+        ('Webhook WooCommerce', {
+            'fields': ('woo_webhook_secret',),
+            'description': 'Secret para validar webhooks do WooCommerce. URL: /webhooks/woo/{slug}/order-created/'
         }),
         ('Mensagens WhatsApp', {
             'fields': ('msg_whatsapp_lead', 'msg_whatsapp_lead_cliente',

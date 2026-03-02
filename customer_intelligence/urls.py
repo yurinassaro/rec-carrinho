@@ -9,6 +9,7 @@ from django.http import JsonResponse
 
 from rest_framework import routers
 from customers.views import CustomerViewSet
+from customers.webhooks import woo_order_created
 
 # Configurar nome do Admin
 admin.site.site_header = 'Carrinho e Leads'
@@ -31,6 +32,8 @@ urlpatterns = [
     path('tenants/', include('tenants.urls')),
     path('importer/', include('importer.urls')),
     path('api/', include(router.urls)),
+    # Webhooks WooCommerce
+    path('webhooks/woo/<slug:empresa_slug>/order-created/', woo_order_created, name='woo_order_created'),
 ]
 
 # Servir arquivos de media em desenvolvimento

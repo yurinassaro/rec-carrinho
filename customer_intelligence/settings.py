@@ -44,7 +44,7 @@ INSTALLED_APPS = [
     'customers',
     'analytics',
     'importer',
-
+    'marketing',
 ]
 
 MIDDLEWARE = [
@@ -116,6 +116,11 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 # STATICFILES_DIRS = [
 #     BASE_DIR / 'static',
 # ]
+
+# W-API WhatsApp (w-api.app)
+WAPI_URL = config('WAPI_URL', default='https://api.w-api.app/v1')
+WAPI_TOKEN = config('WAPI_TOKEN', default='')
+WAPI_INSTANCE = config('WAPI_INSTANCE', default='')
 
 # Media files
 MEDIA_URL = '/media/'

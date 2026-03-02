@@ -30,7 +30,13 @@ class Customer(models.Model):
     phone = models.CharField(max_length=20, null=True, blank=True, db_index=True)
     first_name = models.CharField(max_length=100, null=True, blank=True)
     last_name = models.CharField(max_length=100, null=True, blank=True)
-    
+
+    # Endereço de cobrança (billing)
+    billing_address = models.CharField(max_length=255, null=True, blank=True, verbose_name='Endereço')
+    billing_city = models.CharField(max_length=100, null=True, blank=True, verbose_name='Cidade')
+    billing_state = models.CharField(max_length=5, null=True, blank=True, verbose_name='Estado')
+    billing_postcode = models.CharField(max_length=20, null=True, blank=True, verbose_name='CEP')
+
     # Status e classificação
     status = models.CharField(max_length=20, choices=CUSTOMER_STATUS, default='never_bought')
     score = models.IntegerField(default=0)  # 0-100 pontuação do cliente
@@ -415,12 +421,20 @@ class Lead(models.Model):
 
     def check_if_customer(self):
         """
-        Verifica se o lead já é cliente baseado no WhatsApp
+        Verifica se o lead já é cliente baseado no WhatsApp.
+        Filtra pela mesma empresa do lead.
         """
-        # Buscar por WhatsApp
-        customer = Customer.objects.filter(
-            phone__contains=self.whatsapp.replace(' ', '').replace('-', '')
-        ).first()
+        if not self.whatsapp:
+            return False
+
+        phone_clean = self.whatsapp.replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+
+        # Filtrar pela mesma empresa
+        qs = Customer.objects.filter(phone__contains=phone_clean)
+        if self.empresa_id:
+            qs = qs.filter(empresa=self.empresa)
+
+        customer = qs.first()
 
         if customer:
             self.is_customer = True

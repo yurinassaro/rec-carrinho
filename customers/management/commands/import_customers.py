@@ -623,7 +623,7 @@ class Command(BaseCommand):
                 # Processar other_fields
                 if cart_data.get('other_fields'):
                     wcf_data = self.parse_wcf_fields(cart_data['other_fields'])
-                    
+
                     if wcf_data:
                         if wcf_data.get('phone'):
                             customer_data['phone'] = wcf_data['phone']
@@ -631,6 +631,14 @@ class Command(BaseCommand):
                             customer_data['first_name'] = wcf_data['first_name']
                         if wcf_data.get('last_name'):
                             customer_data['last_name'] = wcf_data['last_name']
+                        if wcf_data.get('address'):
+                            customer_data['billing_address'] = wcf_data['address']
+                        if wcf_data.get('city'):
+                            customer_data['billing_city'] = wcf_data['city']
+                        if wcf_data.get('state'):
+                            customer_data['billing_state'] = wcf_data['state']
+                        if wcf_data.get('postcode'):
+                            customer_data['billing_postcode'] = wcf_data['postcode']
                 
                 customer, created = Customer.objects.update_or_create(
                     empresa=self.empresa,
@@ -1023,16 +1031,16 @@ class Command(BaseCommand):
                         )
                         updated = True
                     
-                    # Adicionar informações extras como tags
-                    if user_data['city'] or user_data['state']:
-                        location_info = {
-                            'city': user_data['city'],
-                            'state': user_data['state'],
-                            'postcode': user_data['postcode']
-                        }
-                        if 'location' not in customer.tags:
-                            customer.tags.append(location_info)
-                            updated = True
+                    # Salvar endereco nos campos proprios
+                    if user_data['city'] and not customer.billing_city:
+                        customer.billing_city = user_data['city']
+                        updated = True
+                    if user_data['state'] and not customer.billing_state:
+                        customer.billing_state = user_data['state']
+                        updated = True
+                    if user_data['postcode'] and not customer.billing_postcode:
+                        customer.billing_postcode = user_data['postcode']
+                        updated = True
                     
                     if updated:
                         customer.save()
@@ -1117,8 +1125,10 @@ class Command(BaseCommand):
                         'phone': order['phone'],
                         'first_name': order['first_name'],
                         'last_name': order['last_name'],
+                        'address': order.get('address_1', ''),
                         'city': order['city'],
                         'state': order['state'],
+                        'postcode': order.get('postcode', ''),
                         'date': order['order_date']
                     }
         
@@ -1144,14 +1154,28 @@ class Command(BaseCommand):
                     if not customer.last_name and data['last_name']:
                         customer.last_name = data['last_name']
                         updated = True
-                    
+
+                    # Salvar endereco nos campos proprios
+                    if data.get('address') and not customer.billing_address:
+                        customer.billing_address = data['address']
+                        updated = True
+                    if data.get('city') and not customer.billing_city:
+                        customer.billing_city = data['city']
+                        updated = True
+                    if data.get('state') and not customer.billing_state:
+                        customer.billing_state = data['state']
+                        updated = True
+                    if data.get('postcode') and not customer.billing_postcode:
+                        customer.billing_postcode = data['postcode']
+                        updated = True
+
                     if updated:
                         customer.save()
                         updated_count += 1
-                        
+
             except Exception as e:
                 self.stdout.write(f'❌ Erro ao atualizar {email}: {e}')
-        
+
         self.stdout.write(f'✅ {updated_count} clientes atualizados com dados dos pedidos')
 
     
@@ -1217,8 +1241,8 @@ class Command(BaseCommand):
         waiting_count = 0
 
         for cart in abandoned_carts:
-            # Janela de recuperação: 2 dias ANTES até 30 dias DEPOIS
-            window_start = cart.created_at - timedelta(days=2)
+            # Janela de recuperação: 30 dias ANTES até 30 dias DEPOIS
+            window_start = cart.created_at - timedelta(days=30)
             window_end = cart.created_at + timedelta(days=30)
 
             recovery_order = None

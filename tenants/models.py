@@ -81,6 +81,14 @@ class Empresa(models.Model):
         help_text='Prefixo das tabelas WordPress (ex: wp_)'
     )
 
+    # Webhook WooCommerce
+    woo_webhook_secret = models.CharField(
+        max_length=200,
+        blank=True,
+        verbose_name='Webhook Secret',
+        help_text='Secret do webhook WooCommerce (configurar no WooCommerce > Settings > Advanced > Webhooks)'
+    )
+
     # Configuracao Form Vibes - Mapeamento de campos
     fv_field_nome = models.CharField(
         max_length=100,
@@ -102,16 +110,50 @@ class Empresa(models.Model):
         help_text='Nome do meta_key para tamanho (ex: Número_do_sapato_9). Deixe vazio se não usar.'
     )
 
+    # W-API WhatsApp (w-api.app) - pode sobrescrever por empresa
+    wapi_token = models.CharField(
+        max_length=200,
+        blank=True,
+        verbose_name='W-API Token',
+        help_text='Token da W-API. Deixe vazio para usar o padrão do sistema.'
+    )
+    wapi_instance = models.CharField(
+        max_length=200,
+        blank=True,
+        verbose_name='W-API Instância',
+        help_text='ID da instância W-API. Deixe vazio para usar o padrão do sistema.'
+    )
+    wapi_ativo = models.BooleanField(
+        default=True,
+        verbose_name='WhatsApp Ativo',
+        help_text='Ativar/desativar envio automático de WhatsApp'
+    )
+
     # Mensagens WhatsApp personalizadas
     msg_whatsapp_lead = models.TextField(
         default='Olá {nome}, tudo bem ??',
-        verbose_name='Mensagem WhatsApp - Leads',
-        help_text='Mensagem padrão para leads. Use {nome} para inserir o nome do lead.'
+        verbose_name='Mensagem WhatsApp - Lead Novo',
+        help_text='Mensagem para leads novos (prospects). Use {nome}.'
+    )
+    msg_whatsapp_lead_cliente = models.TextField(
+        default='Olá {nome}, que bom ter você de volta! Vimos que você já comprou conosco e temos novidades especiais pra você. Posso te ajudar?',
+        verbose_name='Mensagem WhatsApp - Lead já Cliente',
+        help_text='Mensagem para leads que já são clientes. Use {nome}.'
     )
     msg_whatsapp_cart = models.TextField(
         default='Olá {nome}, tudo bem ??',
         verbose_name='Mensagem WhatsApp - Carrinho',
-        help_text='Mensagem padrão para recuperação de carrinho. Use {nome} para inserir o nome do cliente.'
+        help_text='Mensagem para recuperação de carrinho. Use {nome}.'
+    )
+    msg_whatsapp_pedido_novo = models.TextField(
+        default='Olá {nome}! Recebemos seu pedido #{numero}. Obrigado pela compra! Em breve você receberá atualizações sobre o envio.',
+        verbose_name='Mensagem WhatsApp - Pedido Novo',
+        help_text='Mensagem quando cliente faz uma compra. Use {nome}, {numero}, {valor}.'
+    )
+    msg_whatsapp_pedido_embalado = models.TextField(
+        default='Olá {nome}! Seu pedido #{numero} já foi embalado e saiu da fábrica! O código de rastreio será enviado para o seu email ainda hoje à noite.',
+        verbose_name='Mensagem WhatsApp - Pedido Embalado',
+        help_text='Mensagem quando pedido é embalado. Use {nome}, {numero}.'
     )
 
     # Configuracoes visuais
