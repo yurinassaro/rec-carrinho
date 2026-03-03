@@ -257,8 +257,13 @@ class CartAdmin(TenantAdminMixin, admin.ModelAdmin):
         web_url = f"https://wa.me/{phone}?text={msg_encoded}"
         app_url = f"whatsapp://send?phone={phone}&text={msg_encoded}"
 
-        # WAPI configurado?
-        wapi_configurado = (obj.empresa and obj.empresa.wapi_token and obj.empresa.wapi_instance)
+        # WAPI configurado? (default da empresa OU instância vinculada)
+        wapi_configurado = False
+        if obj.empresa:
+            wapi_configurado = (
+                (obj.empresa.wapi_token and obj.empresa.wapi_instance)
+                or obj.empresa.instancias_wapi.filter(ativo=True).exists()
+            )
         wapi_btn = ''
         if wapi_configurado:
             wapi_btn = (
@@ -538,8 +543,13 @@ class LeadAdmin(TenantAdminMixin, admin.ModelAdmin):
             date_text = ''
             new_status = 'true'
 
-        # WAPI configurado?
-        wapi_configurado = (obj.empresa and obj.empresa.wapi_token and obj.empresa.wapi_instance)
+        # WAPI configurado? (default da empresa OU instância vinculada)
+        wapi_configurado = False
+        if obj.empresa:
+            wapi_configurado = (
+                (obj.empresa.wapi_token and obj.empresa.wapi_instance)
+                or obj.empresa.instancias_wapi.filter(ativo=True).exists()
+            )
         if wapi_configurado:
             wapi_btn = (
                 f'<button onclick="sendLeadWhatsApp({obj.id}, event)"'

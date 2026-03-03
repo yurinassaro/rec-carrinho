@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.models import User
-from .models import Empresa, EmpresaUsuario
+from .models import Empresa, EmpresaUsuario, InstanciaWAPI
 
 
 class TenantAdminMixin:
@@ -68,6 +68,25 @@ class TenantAdminMixin:
         return super().has_delete_permission(request, obj)
 
 
+class InstanciaWAPIInline(admin.TabularInline):
+    model = InstanciaWAPI
+    extra = 1
+    fields = ['nome', 'wapi_token', 'wapi_instance', 'ativo']
+
+    # Permissões abertas - o EmpresaAdmin já controla quem acessa qual empresa
+    def has_add_permission(self, request, obj=None):
+        return True
+
+    def has_change_permission(self, request, obj=None):
+        return True
+
+    def has_delete_permission(self, request, obj=None):
+        return True
+
+    def has_view_permission(self, request, obj=None):
+        return True
+
+
 class EmpresaUsuarioInline(admin.TabularInline):
     model = EmpresaUsuario
     extra = 1
@@ -81,7 +100,7 @@ class EmpresaAdmin(admin.ModelAdmin):
     list_filter = ['ativo', 'plano']
     search_fields = ['nome', 'slug', 'dominio']
     readonly_fields = ['created_at', 'updated_at']
-    inlines = [EmpresaUsuarioInline]
+    inlines = [InstanciaWAPIInline, EmpresaUsuarioInline]
 
     def get_prepopulated_fields(self, request, obj=None):
         """Apenas superusers tem prepopulated_fields"""
@@ -132,11 +151,18 @@ class EmpresaAdmin(admin.ModelAdmin):
             'description': 'Credenciais da W-API (w-api.app) para envio automático. Cada empresa tem suas próprias credenciais.'
         }),
         ('Mensagens WhatsApp', {
-            'fields': ('msg_whatsapp_lead', 'msg_whatsapp_lead_cliente', 'msg_whatsapp_cart',
-                       'msg_whatsapp_pedido_novo', 'msg_whatsapp_pedido_processando',
-                       'msg_whatsapp_pedido_embalado', 'msg_whatsapp_pedido_transito',
-                       'msg_whatsapp_pedido_concluido', 'msg_whatsapp_pedido_cancelado'),
-            'description': 'Configure as mensagens padrão do WhatsApp. Use {nome}, {numero}, {valor}.'
+            'fields': (
+                ('msg_whatsapp_lead', 'instancia_lead'),
+                ('msg_whatsapp_lead_cliente', 'instancia_lead_cliente'),
+                ('msg_whatsapp_cart', 'instancia_cart'),
+                ('msg_whatsapp_pedido_novo', 'instancia_pedido_novo'),
+                ('msg_whatsapp_pedido_processando', 'instancia_pedido_processando'),
+                ('msg_whatsapp_pedido_embalado', 'instancia_pedido_embalado'),
+                ('msg_whatsapp_pedido_transito', 'instancia_pedido_transito'),
+                ('msg_whatsapp_pedido_concluido', 'instancia_pedido_concluido'),
+                ('msg_whatsapp_pedido_cancelado', 'instancia_pedido_cancelado'),
+            ),
+            'description': 'Configure as mensagens e a instância W-API de cada tipo. Use {nome}, {numero}, {valor}. Se a instância não for escolhida, usa a padrão da empresa.'
         }),
         ('Personalizacao', {
             'fields': ('timezone', 'logo', 'cor_primaria'),
@@ -163,11 +189,18 @@ class EmpresaAdmin(admin.ModelAdmin):
             'description': 'Secret para validar webhooks do WooCommerce. URL: /webhooks/woo/{slug}/order-created/'
         }),
         ('Mensagens WhatsApp', {
-            'fields': ('msg_whatsapp_lead', 'msg_whatsapp_lead_cliente',
-                       'msg_whatsapp_cart', 'msg_whatsapp_pedido_novo', 'msg_whatsapp_pedido_processando',
-                       'msg_whatsapp_pedido_embalado', 'msg_whatsapp_pedido_transito',
-                       'msg_whatsapp_pedido_concluido', 'msg_whatsapp_pedido_cancelado'),
-            'description': 'Configure as mensagens padrão do WhatsApp. Use {nome}, {numero}, {valor}.'
+            'fields': (
+                ('msg_whatsapp_lead', 'instancia_lead'),
+                ('msg_whatsapp_lead_cliente', 'instancia_lead_cliente'),
+                ('msg_whatsapp_cart', 'instancia_cart'),
+                ('msg_whatsapp_pedido_novo', 'instancia_pedido_novo'),
+                ('msg_whatsapp_pedido_processando', 'instancia_pedido_processando'),
+                ('msg_whatsapp_pedido_embalado', 'instancia_pedido_embalado'),
+                ('msg_whatsapp_pedido_transito', 'instancia_pedido_transito'),
+                ('msg_whatsapp_pedido_concluido', 'instancia_pedido_concluido'),
+                ('msg_whatsapp_pedido_cancelado', 'instancia_pedido_cancelado'),
+            ),
+            'description': 'Configure as mensagens e a instância W-API de cada tipo. Use {nome}, {numero}, {valor}. Se a instância não for escolhida, usa a padrão da empresa.'
         }),
     )
 
@@ -195,10 +228,20 @@ class EmpresaAdmin(admin.ModelAdmin):
         return qs.filter(usuarios__usuario=request.user)
 
     def get_inlines(self, request, obj=None):
-        """Esconder inlines para usuarios normais"""
+        """Superusers veem tudo, usuarios normais veem instancias WAPI"""
         if request.user.is_superuser:
-            return [EmpresaUsuarioInline]
-        return []
+            return [InstanciaWAPIInline, EmpresaUsuarioInline]
+        return [InstanciaWAPIInline]
+
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        """Filtra instâncias W-API para mostrar apenas as da empresa sendo editada"""
+        if db_field.name.startswith('instancia_'):
+            obj_id = request.resolver_match.kwargs.get('object_id')
+            if obj_id:
+                kwargs['queryset'] = InstanciaWAPI.objects.filter(empresa_id=obj_id, ativo=True)
+            else:
+                kwargs['queryset'] = InstanciaWAPI.objects.none()
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
     def has_woo_config(self, obj):
         return obj.has_woocommerce_config

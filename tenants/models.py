@@ -3,6 +3,35 @@ from django.contrib.auth.models import User
 from django.utils.text import slugify
 
 
+class InstanciaWAPI(models.Model):
+    """
+    Instância W-API vinculada a uma empresa.
+    Permite múltiplas instâncias (ex: Pós-Venda, Vendas, Suporte).
+    """
+    empresa = models.ForeignKey(
+        'Empresa',
+        on_delete=models.CASCADE,
+        related_name='instancias_wapi'
+    )
+    nome = models.CharField(
+        max_length=100,
+        help_text='Ex: Pós-Venda, Vendas, Suporte'
+    )
+    wapi_token = models.CharField(max_length=200, verbose_name='Token')
+    wapi_instance = models.CharField(max_length=200, verbose_name='Instância')
+    ativo = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'instancias_wapi'
+        verbose_name = 'Instância W-API'
+        verbose_name_plural = 'Instâncias W-API'
+        ordering = ['nome']
+
+    def __str__(self):
+        return f"{self.nome} ({self.empresa.nome})"
+
+
 class Empresa(models.Model):
     """
     Tenant principal - representa cada empresa/loja
@@ -174,6 +203,44 @@ class Empresa(models.Model):
         default='Olá {nome}, seu pedido #{numero} foi cancelado. Se precisar de ajuda, estamos à disposição.',
         verbose_name='Mensagem WhatsApp - Pedido Cancelado',
         help_text='Mensagem quando pedido é cancelado. Use {nome}, {numero}, {valor}.'
+    )
+
+    # Instâncias W-API por tipo de mensagem (fallback: wapi_token/wapi_instance acima)
+    instancia_lead = models.ForeignKey(
+        InstanciaWAPI, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='+', verbose_name='Instância - Lead Novo',
+    )
+    instancia_lead_cliente = models.ForeignKey(
+        InstanciaWAPI, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='+', verbose_name='Instância - Lead Cliente',
+    )
+    instancia_cart = models.ForeignKey(
+        InstanciaWAPI, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='+', verbose_name='Instância - Carrinho',
+    )
+    instancia_pedido_novo = models.ForeignKey(
+        InstanciaWAPI, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='+', verbose_name='Instância - Pedido Novo',
+    )
+    instancia_pedido_processando = models.ForeignKey(
+        InstanciaWAPI, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='+', verbose_name='Instância - Pedido Processando',
+    )
+    instancia_pedido_embalado = models.ForeignKey(
+        InstanciaWAPI, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='+', verbose_name='Instância - Pedido Embalado',
+    )
+    instancia_pedido_transito = models.ForeignKey(
+        InstanciaWAPI, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='+', verbose_name='Instância - Pedido em Trânsito',
+    )
+    instancia_pedido_concluido = models.ForeignKey(
+        InstanciaWAPI, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='+', verbose_name='Instância - Pedido Concluído',
+    )
+    instancia_pedido_cancelado = models.ForeignKey(
+        InstanciaWAPI, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='+', verbose_name='Instância - Pedido Cancelado',
     )
 
     # Configuracoes visuais

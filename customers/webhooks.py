@@ -199,7 +199,7 @@ def _process_woo_order(request, empresa_slug):
 
     # 7. Enviar WhatsApp de boas-vindas
     whatsapp_result = {'sent': False}
-    if empresa.wapi_ativo and empresa.wapi_token and empresa.wapi_instance:
+    if empresa.wapi_ativo:
         telefone = formatar_telefone(phone)
         if telefone:
             result = enviar_whatsapp_pedido_novo(customer, order_obj, empresa=empresa)
@@ -369,7 +369,7 @@ def _process_woo_order_updated(request, empresa_slug):
     status_changed = old_status != new_status
 
     if status_changed and new_status in STATUS_MSG_MAP:
-        if empresa.wapi_ativo and empresa.wapi_token and empresa.wapi_instance:
+        if empresa.wapi_ativo:
             telefone = formatar_telefone(phone)
             if telefone:
                 result = enviar_whatsapp_pedido_status(customer, order_obj, new_status, empresa=empresa)
@@ -384,7 +384,7 @@ def _process_woo_order_updated(request, empresa_slug):
             else:
                 whatsapp_result = {'sent': False, 'error': 'telefone invalido'}
         else:
-            whatsapp_result = {'sent': False, 'error': 'wapi não ativo ou não configurado'}
+            whatsapp_result = {'sent': False, 'error': 'wapi não ativo'}
     elif not status_changed:
         logger.info(f'Order #{order_number} status não mudou ({new_status}), sem WhatsApp')
     elif new_status not in STATUS_MSG_MAP:

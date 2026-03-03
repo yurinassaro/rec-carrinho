@@ -37,6 +37,7 @@ class TenantMiddleware:
         '/media/',
         '/tenants/select/',
         '/tenants/switch/',
+        '/webhooks/',
     ]
 
     def __init__(self, get_response):
@@ -138,6 +139,7 @@ class TenantRequiredMiddleware:
         '/tenants/select/',
         '/tenants/switch/',
         '/tenants/',  # APIs do tenant
+        '/webhooks/',
     ]
 
     def __init__(self, get_response):

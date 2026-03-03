@@ -98,6 +98,45 @@ class WAPIClient:
             return {'success': False, 'error': str(e)}
 
 
+# Mapa tipo de mensagem → campo FK na Empresa
+INSTANCIA_MAP = {
+    'lead': 'instancia_lead',
+    'lead_cliente': 'instancia_lead_cliente',
+    'cart': 'instancia_cart',
+    'pedido_novo': 'instancia_pedido_novo',
+    'pedido_processando': 'instancia_pedido_processando',
+    'pedido_embalado': 'instancia_pedido_embalado',
+    'pedido_transito': 'instancia_pedido_transito',
+    'pedido_concluido': 'instancia_pedido_concluido',
+    'pedido_cancelado': 'instancia_pedido_cancelado',
+}
+
+# Mapa status WooCommerce → chave do INSTANCIA_MAP
+STATUS_INSTANCIA_MAP = {
+    'processing': 'pedido_processando',
+    'embalado': 'pedido_embalado',
+    'em-transito': 'pedido_transito',
+    'completed': 'pedido_concluido',
+    'cancelled': 'pedido_cancelado',
+}
+
+
+def _get_wapi_client(empresa, tipo_mensagem):
+    """
+    Retorna WAPIClient da instância vinculada ao tipo de mensagem,
+    ou fallback para credenciais default da empresa.
+    """
+    campo_fk = INSTANCIA_MAP.get(tipo_mensagem)
+    instancia = getattr(empresa, campo_fk, None) if campo_fk else None
+    if instancia and instancia.ativo:
+        return WAPIClient(token=instancia.wapi_token, instance=instancia.wapi_instance)
+    # Fallback: credenciais default da empresa
+    return WAPIClient(
+        token=empresa.wapi_token if empresa.wapi_token else None,
+        instance=empresa.wapi_instance if empresa.wapi_instance else None,
+    )
+
+
 def formatar_telefone(telefone: str) -> str:
     """Formata telefone para W-API (apenas dígitos com 55)"""
     if not telefone:
@@ -135,10 +174,9 @@ def enviar_whatsapp_lead(lead, is_customer: bool, empresa=None) -> dict:
 
     mensagem = template.replace('{nome}', nome)
 
-    # Usar credenciais da empresa
-    token = emp.wapi_token if emp and emp.wapi_token else None
-    instance = emp.wapi_instance if emp and emp.wapi_instance else None
-    client = WAPIClient(token=token, instance=instance)
+    # Usar instância específica ou fallback para default
+    tipo = 'lead_cliente' if is_customer else 'lead'
+    client = _get_wapi_client(emp, tipo)
 
     if not client.esta_configurado():
         return {'success': False, 'error': 'W-API não configurado. Configure token e instância em Empresas > W-API WhatsApp.'}
@@ -184,10 +222,8 @@ def enviar_whatsapp_cart(cart, empresa=None) -> dict:
     if cart.cart_total:
         mensagem = mensagem.replace('{valor}', f"R$ {cart.cart_total:,.2f}")
 
-    # Usar credenciais da empresa
-    token = emp.wapi_token if emp and emp.wapi_token else None
-    instance = emp.wapi_instance if emp and emp.wapi_instance else None
-    client = WAPIClient(token=token, instance=instance)
+    # Usar instância específica ou fallback para default
+    client = _get_wapi_client(emp, 'cart')
 
     if not client.esta_configurado():
         return {'success': False, 'error': 'W-API não configurado. Configure token e instância em Empresas > W-API WhatsApp.'}
@@ -230,9 +266,7 @@ def enviar_whatsapp_pedido_novo(customer, order, empresa=None) -> dict:
     mensagem = mensagem.replace('{numero}', str(order.order_number or order.order_id))
     mensagem = mensagem.replace('{valor}', f"R$ {order.total:,.2f}" if order.total else '')
 
-    token = emp.wapi_token if emp and emp.wapi_token else None
-    instance = emp.wapi_instance if emp and emp.wapi_instance else None
-    client = WAPIClient(token=token, instance=instance)
+    client = _get_wapi_client(emp, 'pedido_novo')
     return client.enviar_mensagem(telefone, mensagem)
 
 
@@ -277,9 +311,8 @@ def enviar_whatsapp_pedido_status(customer, order, status, empresa=None) -> dict
     mensagem = mensagem.replace('{numero}', str(order.order_number or order.order_id))
     mensagem = mensagem.replace('{valor}', f"R$ {order.total:,.2f}" if order.total else '')
 
-    token = emp.wapi_token if emp and emp.wapi_token else None
-    instance = emp.wapi_instance if emp and emp.wapi_instance else None
-    client = WAPIClient(token=token, instance=instance)
+    tipo = STATUS_INSTANCIA_MAP.get(status, '')
+    client = _get_wapi_client(emp, tipo) if tipo else _get_wapi_client(emp, '')
     return client.enviar_mensagem(telefone, mensagem)
 
 
@@ -304,7 +337,5 @@ def enviar_whatsapp_pedido_embalado(customer, order, empresa=None) -> dict:
     mensagem = template.replace('{nome}', nome)
     mensagem = mensagem.replace('{numero}', str(order.order_number or order.order_id))
 
-    token = emp.wapi_token if emp and emp.wapi_token else None
-    instance = emp.wapi_instance if emp and emp.wapi_instance else None
-    client = WAPIClient(token=token, instance=instance)
+    client = _get_wapi_client(emp, 'pedido_embalado')
     return client.enviar_mensagem(telefone, mensagem)

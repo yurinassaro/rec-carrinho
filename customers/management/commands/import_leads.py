@@ -304,7 +304,8 @@ class Command(BaseCommand):
                 if created:
                     new_leads += 1
                     # Verificar se já é cliente
-                    if lead.check_if_customer():
+                    is_customer = lead.check_if_customer()
+                    if is_customer:
                         existing_customers += 1
                         self.stdout.write(
                             self.style.SUCCESS(f'  ✅ {lead.nome} - JÁ É CLIENTE!')
@@ -313,11 +314,29 @@ class Command(BaseCommand):
                         self.stdout.write(
                             f'  📱 {lead.nome} - Novo lead - Sapato {lead.numero_sapato}'
                         )
+
+                    lead.save()
+
+                    # Disparo automático W-API
+                    if self.empresa and self.empresa.wapi_ativo:
+                        try:
+                            from customers.services.wapi import enviar_whatsapp_lead
+                            resultado = enviar_whatsapp_lead(lead, is_customer, self.empresa)
+                            if resultado['success']:
+                                self.stdout.write(
+                                    self.style.SUCCESS(f'    📲 WhatsApp enviado para {lead.nome}')
+                                )
+                            else:
+                                self.stdout.write(
+                                    self.style.WARNING(f'    ⚠️ WhatsApp falhou: {resultado.get("error", "")[:80]}')
+                                )
+                        except Exception as e:
+                            self.stdout.write(
+                                self.style.WARNING(f'    ⚠️ Erro ao enviar WhatsApp: {e}')
+                            )
                 else:
                     updated_leads += 1
                     self.stdout.write(f'  🔄 {lead.nome} - Atualizado')
-                
-                lead.save()
                 
             except Exception as e:
                 self.stdout.write(
