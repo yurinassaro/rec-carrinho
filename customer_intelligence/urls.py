@@ -32,6 +32,8 @@ urlpatterns = [
     path('tenants/', include('tenants.urls')),
     path('importer/', include('importer.urls')),
     path('api/', include(router.urls)),
+    # Bling OAuth
+    path('bling/', include('bling.urls')),
     # Webhooks WooCommerce
     path('webhooks/woo/<slug:empresa_slug>/order-created/', woo_order_created, name='woo_order_created'),
     path('webhooks/woo/<slug:empresa_slug>/order-created', woo_order_created),

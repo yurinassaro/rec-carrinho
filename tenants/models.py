@@ -158,6 +158,17 @@ class Empresa(models.Model):
         help_text='Ativar/desativar envio automático de WhatsApp'
     )
 
+    # Ativo/inativo por tipo de mensagem
+    msg_ativa_lead = models.BooleanField(default=True, verbose_name='Ativo')
+    msg_ativa_lead_cliente = models.BooleanField(default=True, verbose_name='Ativo')
+    msg_ativa_cart = models.BooleanField(default=True, verbose_name='Ativo')
+    msg_ativa_pedido_novo = models.BooleanField(default=True, verbose_name='Ativo')
+    msg_ativa_pedido_processando = models.BooleanField(default=True, verbose_name='Ativo')
+    msg_ativa_pedido_embalado = models.BooleanField(default=True, verbose_name='Ativo')
+    msg_ativa_pedido_transito = models.BooleanField(default=True, verbose_name='Ativo')
+    msg_ativa_pedido_concluido = models.BooleanField(default=True, verbose_name='Ativo')
+    msg_ativa_pedido_cancelado = models.BooleanField(default=True, verbose_name='Ativo')
+
     # Mensagens WhatsApp personalizadas
     msg_whatsapp_lead = models.TextField(
         default='Olá {nome}, tudo bem ??',
@@ -241,6 +252,39 @@ class Empresa(models.Model):
     instancia_pedido_cancelado = models.ForeignKey(
         InstanciaWAPI, null=True, blank=True, on_delete=models.SET_NULL,
         related_name='+', verbose_name='Instância - Pedido Cancelado',
+    )
+
+    # Bling API V3
+    bling_client_id = models.CharField(
+        max_length=200, blank=True, verbose_name='Bling Client ID',
+        help_text='Client ID do app Bling (API V3)'
+    )
+    bling_client_secret = models.CharField(
+        max_length=200, blank=True, verbose_name='Bling Client Secret',
+        help_text='Client Secret do app Bling (API V3)'
+    )
+    bling_situacao_transito_id = models.CharField(
+        max_length=50, blank=True, verbose_name='ID Situação Em Trânsito',
+        help_text='ID da situação "Em Trânsito" no Bling (varia por conta)'
+    )
+
+    # Meta WhatsApp Business API (Cloud API)
+    meta_waba_id = models.CharField(
+        max_length=100, blank=True, verbose_name='WABA ID',
+        help_text='WhatsApp Business Account ID'
+    )
+    meta_phone_number_id = models.CharField(
+        max_length=100, blank=True, verbose_name='Phone Number ID',
+        help_text='ID do número de telefone no Meta Business'
+    )
+    meta_access_token = models.TextField(
+        blank=True, verbose_name='Access Token Meta',
+        help_text='Token de acesso permanente da Meta Cloud API'
+    )
+    meta_template_transito = models.CharField(
+        max_length=100, default='pedido_em_transito', blank=True,
+        verbose_name='Template Em Trânsito',
+        help_text='Nome do template aprovado no WhatsApp Manager'
     )
 
     # Configuracoes visuais

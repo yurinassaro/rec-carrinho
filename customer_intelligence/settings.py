@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'analytics',
     'importer',
     'marketing',
+    'bling',
 ]
 
 MIDDLEWARE = [
@@ -138,6 +139,18 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
+
+# Celery Beat schedule
+CELERY_BEAT_SCHEDULE = {
+    'sync-bling-transito': {
+        'task': 'bling.sync_pedidos_em_transito',
+        'schedule': 30 * 60,  # a cada 30 minutos
+    },
+    'refresh-bling-tokens': {
+        'task': 'bling.refresh_tokens',
+        'schedule': 30 * 60,  # a cada 30 minutos
+    },
+}
 
 # Cache - Usar Redis se REDIS_URL estiver disponível
 REDIS_URL = config('REDIS_URL', default=None)

@@ -1,5 +1,6 @@
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.contrib.auth.models import User
+from django.utils.html import format_html
 from .models import Empresa, EmpresaUsuario, InstanciaWAPI
 
 
@@ -152,17 +153,29 @@ class EmpresaAdmin(admin.ModelAdmin):
         }),
         ('Mensagens WhatsApp', {
             'fields': (
-                ('msg_whatsapp_lead', 'instancia_lead'),
-                ('msg_whatsapp_lead_cliente', 'instancia_lead_cliente'),
-                ('msg_whatsapp_cart', 'instancia_cart'),
-                ('msg_whatsapp_pedido_novo', 'instancia_pedido_novo'),
-                ('msg_whatsapp_pedido_processando', 'instancia_pedido_processando'),
-                ('msg_whatsapp_pedido_embalado', 'instancia_pedido_embalado'),
-                ('msg_whatsapp_pedido_transito', 'instancia_pedido_transito'),
-                ('msg_whatsapp_pedido_concluido', 'instancia_pedido_concluido'),
-                ('msg_whatsapp_pedido_cancelado', 'instancia_pedido_cancelado'),
+                ('msg_ativa_lead', 'msg_whatsapp_lead', 'instancia_lead'),
+                ('msg_ativa_lead_cliente', 'msg_whatsapp_lead_cliente', 'instancia_lead_cliente'),
+                ('msg_ativa_cart', 'msg_whatsapp_cart', 'instancia_cart'),
+                ('msg_ativa_pedido_novo', 'msg_whatsapp_pedido_novo', 'instancia_pedido_novo'),
+                ('msg_ativa_pedido_processando', 'msg_whatsapp_pedido_processando', 'instancia_pedido_processando'),
+                ('msg_ativa_pedido_embalado', 'msg_whatsapp_pedido_embalado', 'instancia_pedido_embalado'),
+                ('msg_ativa_pedido_transito', 'msg_whatsapp_pedido_transito', 'instancia_pedido_transito'),
+                ('msg_ativa_pedido_concluido', 'msg_whatsapp_pedido_concluido', 'instancia_pedido_concluido'),
+                ('msg_ativa_pedido_cancelado', 'msg_whatsapp_pedido_cancelado', 'instancia_pedido_cancelado'),
             ),
-            'description': 'Configure as mensagens e a instância W-API de cada tipo. Use {nome}, {numero}, {valor}. Se a instância não for escolhida, usa a padrão da empresa.'
+            'description': 'Marque "Ativo" para habilitar cada mensagem. Use {nome}, {numero}, {valor}.'
+        }),
+        ('Bling API', {
+            'fields': ('bling_client_id', 'bling_client_secret', 'bling_situacao_transito_id',
+                        'bling_status_display'),
+            'classes': ('collapse',),
+            'description': 'Credenciais Bling API V3. Após configurar, acesse /bling/authorize/{slug}/ para autorizar.'
+        }),
+        ('Meta WhatsApp Business API', {
+            'fields': ('meta_waba_id', 'meta_phone_number_id', 'meta_access_token',
+                        'meta_template_transito'),
+            'classes': ('collapse',),
+            'description': 'Cloud API oficial do WhatsApp (Meta). Templates precisam ser aprovados no WhatsApp Manager.'
         }),
         ('Personalizacao', {
             'fields': ('timezone', 'logo', 'cor_primaria'),
@@ -190,17 +203,17 @@ class EmpresaAdmin(admin.ModelAdmin):
         }),
         ('Mensagens WhatsApp', {
             'fields': (
-                ('msg_whatsapp_lead', 'instancia_lead'),
-                ('msg_whatsapp_lead_cliente', 'instancia_lead_cliente'),
-                ('msg_whatsapp_cart', 'instancia_cart'),
-                ('msg_whatsapp_pedido_novo', 'instancia_pedido_novo'),
-                ('msg_whatsapp_pedido_processando', 'instancia_pedido_processando'),
-                ('msg_whatsapp_pedido_embalado', 'instancia_pedido_embalado'),
-                ('msg_whatsapp_pedido_transito', 'instancia_pedido_transito'),
-                ('msg_whatsapp_pedido_concluido', 'instancia_pedido_concluido'),
-                ('msg_whatsapp_pedido_cancelado', 'instancia_pedido_cancelado'),
+                ('msg_ativa_lead', 'msg_whatsapp_lead', 'instancia_lead'),
+                ('msg_ativa_lead_cliente', 'msg_whatsapp_lead_cliente', 'instancia_lead_cliente'),
+                ('msg_ativa_cart', 'msg_whatsapp_cart', 'instancia_cart'),
+                ('msg_ativa_pedido_novo', 'msg_whatsapp_pedido_novo', 'instancia_pedido_novo'),
+                ('msg_ativa_pedido_processando', 'msg_whatsapp_pedido_processando', 'instancia_pedido_processando'),
+                ('msg_ativa_pedido_embalado', 'msg_whatsapp_pedido_embalado', 'instancia_pedido_embalado'),
+                ('msg_ativa_pedido_transito', 'msg_whatsapp_pedido_transito', 'instancia_pedido_transito'),
+                ('msg_ativa_pedido_concluido', 'msg_whatsapp_pedido_concluido', 'instancia_pedido_concluido'),
+                ('msg_ativa_pedido_cancelado', 'msg_whatsapp_pedido_cancelado', 'instancia_pedido_cancelado'),
             ),
-            'description': 'Configure as mensagens e a instância W-API de cada tipo. Use {nome}, {numero}, {valor}. Se a instância não for escolhida, usa a padrão da empresa.'
+            'description': 'Marque "Ativo" para habilitar cada mensagem. Use {nome}, {numero}, {valor}.'
         }),
     )
 
@@ -213,7 +226,7 @@ class EmpresaAdmin(admin.ModelAdmin):
     def get_readonly_fields(self, request, obj=None):
         """Usuarios normais so podem editar mensagens WhatsApp"""
         if request.user.is_superuser:
-            return ['created_at', 'updated_at']
+            return ['created_at', 'updated_at', 'bling_status_display']
         # Usuarios normais: nome eh readonly
         return ['nome', 'created_at', 'updated_at']
 
@@ -243,10 +256,47 @@ class EmpresaAdmin(admin.ModelAdmin):
                 kwargs['queryset'] = InstanciaWAPI.objects.none()
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
+    actions = ['sync_bling_agora']
+
     def has_woo_config(self, obj):
         return obj.has_woocommerce_config
     has_woo_config.boolean = True
     has_woo_config.short_description = 'WooCommerce'
+
+    def bling_status_display(self, obj):
+        """Mostra status da conexão Bling e link para autorizar."""
+        if not obj.bling_client_id:
+            return format_html('<span style="color:gray;">Não configurado</span>')
+        try:
+            token = obj.bling_token
+            if token.is_expired:
+                status = '<span style="color:red;">Token expirado</span>'
+            else:
+                status = '<span style="color:green;">Conectado</span>'
+        except Exception:
+            status = '<span style="color:orange;">Não autorizado</span>'
+        authorize_url = f'/bling/authorize/{obj.slug}/'
+        return format_html(f'{status} &nbsp; <a href="{authorize_url}" class="button">Autorizar Bling</a>')
+    bling_status_display.short_description = 'Status Bling'
+
+    def sync_bling_agora(self, request, queryset):
+        """Action: sincronizar pedidos em trânsito do Bling agora."""
+        from bling.tasks import sync_empresa_pedidos_transito
+        for empresa in queryset:
+            if not empresa.bling_client_id or not empresa.bling_situacao_transito_id:
+                self.message_user(request, f"{empresa.nome}: Bling não configurado", messages.WARNING)
+                continue
+            try:
+                stats = sync_empresa_pedidos_transito(empresa)
+                self.message_user(
+                    request,
+                    f"{empresa.nome}: {stats['enviados']} enviados, "
+                    f"{stats['ja_enviados']} já enviados, {stats['erros']} erros",
+                    messages.SUCCESS if stats['erros'] == 0 else messages.WARNING
+                )
+            except Exception as e:
+                self.message_user(request, f"{empresa.nome}: Erro - {e}", messages.ERROR)
+    sync_bling_agora.short_description = 'Sincronizar Bling Agora'
 
     def has_module_permission(self, request):
         """Superusers ou usuarios vinculados a alguma empresa"""

@@ -111,6 +111,19 @@ INSTANCIA_MAP = {
     'pedido_cancelado': 'instancia_pedido_cancelado',
 }
 
+# Mapa tipo de mensagem → campo booleano ativo na Empresa
+MSG_ATIVA_MAP = {
+    'lead': 'msg_ativa_lead',
+    'lead_cliente': 'msg_ativa_lead_cliente',
+    'cart': 'msg_ativa_cart',
+    'pedido_novo': 'msg_ativa_pedido_novo',
+    'pedido_processando': 'msg_ativa_pedido_processando',
+    'pedido_embalado': 'msg_ativa_pedido_embalado',
+    'pedido_transito': 'msg_ativa_pedido_transito',
+    'pedido_concluido': 'msg_ativa_pedido_concluido',
+    'pedido_cancelado': 'msg_ativa_pedido_cancelado',
+}
+
 # Mapa status WooCommerce → chave do INSTANCIA_MAP
 STATUS_INSTANCIA_MAP = {
     'processing': 'pedido_processando',
@@ -119,6 +132,14 @@ STATUS_INSTANCIA_MAP = {
     'completed': 'pedido_concluido',
     'cancelled': 'pedido_cancelado',
 }
+
+
+def _msg_ativa(empresa, tipo_mensagem):
+    """Verifica se a mensagem deste tipo está ativa na empresa."""
+    campo = MSG_ATIVA_MAP.get(tipo_mensagem)
+    if not campo:
+        return True  # tipo desconhecido, permite por padrão
+    return getattr(empresa, campo, True)
 
 
 def _get_wapi_client(empresa, tipo_mensagem):
@@ -154,12 +175,17 @@ def enviar_whatsapp_lead(lead, is_customer: bool, empresa=None) -> dict:
     Envia WhatsApp automático para lead novo.
     Mensagem diferente se já é cliente ou prospect.
     """
+    emp = empresa or lead.empresa
+    tipo = 'lead_cliente' if is_customer else 'lead'
+
+    if not _msg_ativa(emp, tipo):
+        return {'success': False, 'error': f'Mensagem {tipo} desativada para esta empresa'}
+
     telefone = formatar_telefone(lead.whatsapp)
     if not telefone:
         return {'success': False, 'error': 'Lead sem WhatsApp'}
 
     nome = lead.nome.split()[0] if lead.nome else 'Cliente'
-    emp = empresa or lead.empresa
 
     if is_customer:
         template = emp.msg_whatsapp_lead_cliente if emp and emp.msg_whatsapp_lead_cliente else (
@@ -175,7 +201,6 @@ def enviar_whatsapp_lead(lead, is_customer: bool, empresa=None) -> dict:
     mensagem = template.replace('{nome}', nome)
 
     # Usar instância específica ou fallback para default
-    tipo = 'lead_cliente' if is_customer else 'lead'
     client = _get_wapi_client(emp, tipo)
 
     if not client.esta_configurado():
@@ -206,13 +231,17 @@ def enviar_whatsapp_cart(cart, empresa=None) -> dict:
     Envia WhatsApp de recuperação de carrinho abandonado via W-API.
     Usa credenciais da empresa (token/instance).
     """
+    emp = empresa or cart.empresa
+
+    if not _msg_ativa(emp, 'cart'):
+        return {'success': False, 'error': 'Mensagem de carrinho desativada para esta empresa'}
+
     customer = cart.customer
     telefone = formatar_telefone(customer.phone or '')
     if not telefone:
         return {'success': False, 'error': 'Cliente sem telefone'}
 
     nome = customer.first_name.split()[0] if customer.first_name else 'Cliente'
-    emp = empresa or cart.empresa
 
     template = emp.msg_whatsapp_cart if emp and emp.msg_whatsapp_cart else (
         "Olá {nome}, tudo bem?"
@@ -249,12 +278,16 @@ def enviar_whatsapp_pedido_novo(customer, order, empresa=None) -> dict:
     Envia WhatsApp quando cliente faz uma compra nova.
     Mensagem com instruções do pedido.
     """
+    emp = empresa or customer.empresa
+
+    if not _msg_ativa(emp, 'pedido_novo'):
+        return {'success': False, 'error': 'Mensagem de pedido novo desativada para esta empresa'}
+
     telefone = formatar_telefone(customer.phone)
     if not telefone:
         return {'success': False, 'error': 'Cliente sem telefone'}
 
     nome = customer.first_name or 'Cliente'
-    emp = empresa or customer.empresa
 
     template = emp.msg_whatsapp_pedido_novo if emp and emp.msg_whatsapp_pedido_novo else (
         "Olá {nome}! Recebemos seu pedido #{numero}. "
@@ -295,12 +328,17 @@ def enviar_whatsapp_pedido_status(customer, order, status, empresa=None) -> dict
     if status not in STATUS_MSG_MAP:
         return {'success': False, 'error': f'Status {status} não tem mensagem configurada'}
 
+    emp = empresa or customer.empresa
+    tipo = STATUS_INSTANCIA_MAP.get(status, '')
+
+    if tipo and not _msg_ativa(emp, tipo):
+        return {'success': False, 'error': f'Mensagem {tipo} desativada para esta empresa'}
+
     telefone = formatar_telefone(customer.phone)
     if not telefone:
         return {'success': False, 'error': 'Cliente sem telefone'}
 
     nome = customer.first_name or 'Cliente'
-    emp = empresa or customer.empresa
 
     campo = STATUS_MSG_MAP[status]
     template = getattr(emp, campo, '') if emp else ''
@@ -321,12 +359,16 @@ def enviar_whatsapp_pedido_embalado(customer, order, empresa=None) -> dict:
     Envia WhatsApp quando pedido muda para 'embalado' no Bling.
     Informa que saiu da fábrica e rastreio chega à noite.
     """
+    emp = empresa or customer.empresa
+
+    if not _msg_ativa(emp, 'pedido_embalado'):
+        return {'success': False, 'error': 'Mensagem de pedido embalado desativada para esta empresa'}
+
     telefone = formatar_telefone(customer.phone)
     if not telefone:
         return {'success': False, 'error': 'Cliente sem telefone'}
 
     nome = customer.first_name or 'Cliente'
-    emp = empresa or customer.empresa
 
     template = emp.msg_whatsapp_pedido_embalado if emp and emp.msg_whatsapp_pedido_embalado else (
         "Olá {nome}! Seu pedido #{numero} já foi embalado e saiu da fábrica! "
