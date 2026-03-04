@@ -263,9 +263,25 @@ class Empresa(models.Model):
         max_length=200, blank=True, verbose_name='Bling Client Secret',
         help_text='Client Secret do app Bling (API V3)'
     )
+    bling_situacao_processando_id = models.CharField(
+        max_length=50, blank=True, verbose_name='ID Situação Processando',
+        help_text='ID da situação "Processando" no Bling (varia por conta)'
+    )
+    bling_situacao_embalado_id = models.CharField(
+        max_length=50, blank=True, verbose_name='ID Situação Embalado',
+        help_text='ID da situação "Embalado" no Bling (varia por conta)'
+    )
     bling_situacao_transito_id = models.CharField(
         max_length=50, blank=True, verbose_name='ID Situação Em Trânsito',
         help_text='ID da situação "Em Trânsito" no Bling (varia por conta)'
+    )
+    bling_situacao_concluido_id = models.CharField(
+        max_length=50, blank=True, verbose_name='ID Situação Concluído',
+        help_text='ID da situação "Concluído" no Bling (varia por conta)'
+    )
+    bling_situacao_cancelado_id = models.CharField(
+        max_length=50, blank=True, verbose_name='ID Situação Cancelado',
+        help_text='ID da situação "Cancelado" no Bling (varia por conta)'
     )
 
     # Meta WhatsApp Business API (Cloud API)

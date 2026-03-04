@@ -1,5 +1,6 @@
 """
 Celery tasks para sincronização Bling → WhatsApp.
+Suporta TODOS os status de pedido: processando, embalado, em-transito, concluido, cancelado.
 """
 import logging
 import random
@@ -13,11 +14,44 @@ from customers.services.wapi import formatar_telefone
 
 logger = logging.getLogger(__name__)
 
+# Mapa de status → campo da situação na Empresa + tipo de mensagem W-API
+BLING_STATUS_MAP = {
+    'processando': {
+        'campo_situacao': 'bling_situacao_processando_id',
+        'tipo_msg': 'pedido_processando',
+        'campo_msg': 'msg_whatsapp_pedido_processando',
+        'msg_default': 'Olá {nome}! Seu pagamento do pedido #{numero} foi confirmado!',
+    },
+    'embalado': {
+        'campo_situacao': 'bling_situacao_embalado_id',
+        'tipo_msg': 'pedido_embalado',
+        'campo_msg': 'msg_whatsapp_pedido_embalado',
+        'msg_default': 'Olá {nome}! Seu pedido #{numero} já foi embalado!',
+    },
+    'em-transito': {
+        'campo_situacao': 'bling_situacao_transito_id',
+        'tipo_msg': 'pedido_transito',
+        'campo_msg': 'msg_whatsapp_pedido_transito',
+        'msg_default': 'Olá {nome}! Seu pedido #{numero} está em trânsito!',
+    },
+    'concluido': {
+        'campo_situacao': 'bling_situacao_concluido_id',
+        'tipo_msg': 'pedido_concluido',
+        'campo_msg': 'msg_whatsapp_pedido_concluido',
+        'msg_default': 'Olá {nome}! Seu pedido #{numero} foi entregue!',
+    },
+    'cancelado': {
+        'campo_situacao': 'bling_situacao_cancelado_id',
+        'tipo_msg': 'pedido_cancelado',
+        'campo_msg': 'msg_whatsapp_pedido_cancelado',
+        'msg_default': 'Olá {nome}, seu pedido #{numero} foi cancelado.',
+    },
+}
+
 
 def _extrair_telefone_pedido(pedido):
     """Extrai telefone do contato do pedido Bling."""
     contato = pedido.get('contato', {})
-    # Bling pode retornar telefone ou celular
     telefone = contato.get('celular') or contato.get('fone') or ''
     return formatar_telefone(telefone)
 
@@ -29,70 +63,64 @@ def _extrair_nome_pedido(pedido):
     return nome_completo.split()[0] if nome_completo else 'Cliente'
 
 
-def _enviar_via_meta(empresa, telefone, nome, numero_pedido):
-    """Envia via Meta Cloud API (template)."""
-    from bling.meta_whatsapp import MetaWhatsAppClient
-
-    client = MetaWhatsAppClient(
-        phone_number_id=empresa.meta_phone_number_id,
-        access_token=empresa.meta_access_token,
-    )
-    if not client.esta_configurado():
-        return {'success': False, 'error': 'Meta WhatsApp não configurado'}
-
-    template_name = empresa.meta_template_transito or 'pedido_em_transito'
-    # Parâmetros do template: {{1}}=nome, {{2}}=numero_pedido
-    return client.enviar_template(telefone, template_name, [nome, numero_pedido])
-
-
-def _enviar_via_wapi(empresa, telefone, nome, numero_pedido):
-    """Fallback: envia via W-API usando mensagem de texto."""
+def _enviar_via_wapi(empresa, telefone, nome, numero_pedido, status):
+    """Envia via W-API usando mensagem configurada para o status."""
     from customers.services.wapi import _get_wapi_client, _msg_ativa
 
-    if not _msg_ativa(empresa, 'pedido_transito'):
-        return {'success': False, 'error': 'Mensagem pedido_transito desativada'}
+    config = BLING_STATUS_MAP.get(status)
+    if not config:
+        return {'success': False, 'error': f'Status desconhecido: {status}'}
 
-    template = empresa.msg_whatsapp_pedido_transito or (
-        'Olá {nome}! Seu pedido #{numero} está em trânsito!'
-    )
+    tipo_msg = config['tipo_msg']
+
+    if not _msg_ativa(empresa, tipo_msg):
+        return {'success': False, 'error': f'Mensagem {tipo_msg} desativada'}
+
+    template = getattr(empresa, config['campo_msg'], '') or config['msg_default']
     mensagem = template.replace('{nome}', nome).replace('{numero}', numero_pedido)
 
-    client = _get_wapi_client(empresa, 'pedido_transito')
+    client = _get_wapi_client(empresa, tipo_msg)
     if not client.esta_configurado():
         return {'success': False, 'error': 'W-API não configurado'}
 
     return client.enviar_mensagem(telefone, mensagem)
 
 
-def sync_empresa_pedidos_transito(empresa, dry_run=False):
+def sync_empresa_pedidos_por_status(empresa, status, dry_run=False):
     """
-    Sincroniza pedidos em trânsito de uma empresa.
+    Sincroniza pedidos de um status específico de uma empresa.
     Retorna dict com estatísticas.
     """
     from bling.services import BlingClient
     from bling.models import BlingPedidoEnviado
 
-    stats = {'total': 0, 'enviados': 0, 'ja_enviados': 0, 'erros': 0, 'sem_telefone': 0}
+    stats = {'status': status, 'total': 0, 'enviados': 0, 'ja_enviados': 0, 'erros': 0, 'sem_telefone': 0}
 
-    if not empresa.bling_client_id or not empresa.bling_situacao_transito_id:
-        logger.warning(f"[{empresa.nome}] Bling não configurado, pulando")
+    config = BLING_STATUS_MAP.get(status)
+    if not config:
+        logger.error(f"[{empresa.nome}] Status '{status}' não reconhecido")
+        return stats
+
+    situacao_id = getattr(empresa, config['campo_situacao'], '')
+    if not empresa.bling_client_id or not situacao_id:
+        logger.debug(f"[{empresa.nome}] Bling não configurado para status '{status}'")
         return stats
 
     client = BlingClient(empresa)
 
     try:
-        pedidos = client.get_pedidos_por_situacao(empresa.bling_situacao_transito_id)
+        pedidos = client.get_pedidos_por_situacao(situacao_id)
     except Exception as e:
-        logger.error(f"[{empresa.nome}] Erro ao buscar pedidos Bling: {e}")
+        logger.error(f"[{empresa.nome}] Erro ao buscar pedidos Bling (status={status}): {e}")
         stats['erros'] += 1
         return stats
 
     stats['total'] = len(pedidos)
-    logger.info(f"[{empresa.nome}] {len(pedidos)} pedidos em trânsito encontrados")
+    logger.info(f"[{empresa.nome}] {len(pedidos)} pedidos '{status}' encontrados")
 
-    # IDs já enviados para esta empresa
+    # IDs já enviados para esta empresa + status
     ids_enviados = set(
-        BlingPedidoEnviado.objects.filter(empresa=empresa)
+        BlingPedidoEnviado.objects.filter(empresa=empresa, status=status)
         .values_list('bling_pedido_id', flat=True)
     )
 
@@ -113,17 +141,11 @@ def sync_empresa_pedidos_transito(empresa, dry_run=False):
         nome = _extrair_nome_pedido(pedido)
 
         if dry_run:
-            logger.info(f"[DRY-RUN] Enviaria WhatsApp para {nome} ({telefone}) - Pedido #{numero}")
+            logger.info(f"[DRY-RUN] [{status}] Enviaria WhatsApp para {nome} ({telefone}) - Pedido #{numero}")
             stats['enviados'] += 1
             continue
 
-        # Tentar Meta Cloud API primeiro, fallback para W-API
-        canal = 'meta'
-        if empresa.meta_phone_number_id and empresa.meta_access_token:
-            resultado = _enviar_via_meta(empresa, telefone, nome, numero)
-        else:
-            canal = 'wapi'
-            resultado = _enviar_via_wapi(empresa, telefone, nome, numero)
+        resultado = _enviar_via_wapi(empresa, telefone, nome, numero, status)
 
         if resultado.get('success'):
             BlingPedidoEnviado.objects.create(
@@ -132,13 +154,14 @@ def sync_empresa_pedidos_transito(empresa, dry_run=False):
                 numero_pedido=numero,
                 telefone=telefone,
                 nome_cliente=nome,
-                canal=canal,
+                status=status,
+                canal='wapi',
             )
             stats['enviados'] += 1
-            logger.info(f"[{empresa.nome}] WhatsApp enviado ({canal}) - Pedido #{numero} → {telefone}")
+            logger.info(f"[{empresa.nome}] WhatsApp enviado [{status}] - Pedido #{numero} → {telefone}")
         else:
             stats['erros'] += 1
-            logger.error(f"[{empresa.nome}] Erro Pedido #{numero}: {resultado.get('error')}")
+            logger.error(f"[{empresa.nome}] Erro Pedido #{numero} [{status}]: {resultado.get('error')}")
 
         # Delay aleatório entre mensagens (45-120s)
         delay = random.uniform(45, 120)
@@ -148,33 +171,53 @@ def sync_empresa_pedidos_transito(empresa, dry_run=False):
     return stats
 
 
-@shared_task(name='bling.sync_pedidos_em_transito')
-def sync_pedidos_em_transito():
+# Manter compatibilidade com código existente
+def sync_empresa_pedidos_transito(empresa, dry_run=False):
+    """Wrapper de compatibilidade. Sincroniza apenas pedidos em trânsito."""
+    return sync_empresa_pedidos_por_status(empresa, 'em-transito', dry_run=dry_run)
+
+
+@shared_task(name='bling.sync_todos_status')
+def sync_todos_status_bling():
     """
-    Task Celery: busca pedidos em trânsito no Bling e envia WhatsApp.
+    Task Celery: busca pedidos de TODOS os status configurados no Bling e envia WhatsApp.
     Roda via Celery Beat a cada 30 minutos.
     """
     empresas = Empresa.objects.filter(
         ativo=True,
         bling_client_id__gt='',
-        bling_situacao_transito_id__gt='',
     )
 
     resultados = {}
     for empresa in empresas:
-        try:
-            stats = sync_empresa_pedidos_transito(empresa)
-            resultados[empresa.slug] = stats
-            logger.info(
-                f"[{empresa.nome}] Sync concluído: "
-                f"{stats['enviados']} enviados, {stats['ja_enviados']} já enviados, "
-                f"{stats['erros']} erros, {stats['sem_telefone']} sem telefone"
-            )
-        except Exception as e:
-            logger.error(f"[{empresa.nome}] Erro fatal no sync: {e}")
-            resultados[empresa.slug] = {'erro': str(e)}
+        resultados[empresa.slug] = {}
+        for status, config in BLING_STATUS_MAP.items():
+            situacao_id = getattr(empresa, config['campo_situacao'], '')
+            if not situacao_id:
+                continue  # Status não configurado para esta empresa
+            try:
+                stats = sync_empresa_pedidos_por_status(empresa, status)
+                resultados[empresa.slug][status] = stats
+                logger.info(
+                    f"[{empresa.nome}] [{status}] Sync concluído: "
+                    f"{stats['enviados']} enviados, {stats['ja_enviados']} já enviados, "
+                    f"{stats['erros']} erros, {stats['sem_telefone']} sem telefone"
+                )
+            except Exception as e:
+                logger.error(f"[{empresa.nome}] [{status}] Erro fatal no sync: {e}")
+                resultados[empresa.slug][status] = {'erro': str(e)}
 
     return resultados
+
+
+@shared_task(name='bling.sync_pedidos_em_transito')
+def sync_pedidos_em_transito():
+    """
+    Task Celery legada: apenas em trânsito.
+    Mantida para compatibilidade com Celery Beat existente.
+    Redireciona para sync_todos_status_bling.
+    """
+    return sync_todos_status_bling()
 
 
 @shared_task(name='bling.refresh_tokens')

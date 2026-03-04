@@ -166,10 +166,12 @@ class EmpresaAdmin(admin.ModelAdmin):
             'description': 'Marque "Ativo" para habilitar cada mensagem. Use {nome}, {numero}, {valor}.'
         }),
         ('Bling API', {
-            'fields': ('bling_client_id', 'bling_client_secret', 'bling_situacao_transito_id',
-                        'bling_status_display'),
+            'fields': ('bling_client_id', 'bling_client_secret',
+                        'bling_situacao_processando_id', 'bling_situacao_embalado_id',
+                        'bling_situacao_transito_id', 'bling_situacao_concluido_id',
+                        'bling_situacao_cancelado_id', 'bling_status_display'),
             'classes': ('collapse',),
-            'description': 'Credenciais Bling API V3. Após configurar, acesse /bling/authorize/{slug}/ para autorizar.'
+            'description': 'Credenciais Bling API V3. Configure os IDs das situações (use --list-situacoes para descobrir). Após configurar, acesse /bling/authorize/{slug}/ para autorizar.'
         }),
         ('Meta WhatsApp Business API', {
             'fields': ('meta_waba_id', 'meta_phone_number_id', 'meta_access_token',
@@ -215,6 +217,20 @@ class EmpresaAdmin(admin.ModelAdmin):
             ),
             'description': 'Marque "Ativo" para habilitar cada mensagem. Use {nome}, {numero}, {valor}.'
         }),
+        ('Bling API', {
+            'fields': ('bling_client_id', 'bling_client_secret',
+                        'bling_situacao_processando_id', 'bling_situacao_embalado_id',
+                        'bling_situacao_transito_id', 'bling_situacao_concluido_id',
+                        'bling_situacao_cancelado_id', 'bling_status_display'),
+            'classes': ('collapse',),
+            'description': 'Credenciais Bling API V3. Configure os IDs das situações (use --list-situacoes para descobrir). Após configurar, acesse /bling/authorize/{slug}/ para autorizar.'
+        }),
+        ('Meta WhatsApp Business API', {
+            'fields': ('meta_waba_id', 'meta_phone_number_id', 'meta_access_token',
+                        'meta_template_transito'),
+            'classes': ('collapse',),
+            'description': 'Cloud API oficial do WhatsApp (Meta). Templates precisam ser aprovados no WhatsApp Manager.'
+        }),
     )
 
     def get_fieldsets(self, request, obj=None):
@@ -228,7 +244,7 @@ class EmpresaAdmin(admin.ModelAdmin):
         if request.user.is_superuser:
             return ['created_at', 'updated_at', 'bling_status_display']
         # Usuarios normais: nome eh readonly
-        return ['nome', 'created_at', 'updated_at']
+        return ['nome', 'created_at', 'updated_at', 'bling_status_display']
 
     def get_queryset(self, request):
         """Usuarios normais so veem sua propria empresa"""
@@ -280,23 +296,41 @@ class EmpresaAdmin(admin.ModelAdmin):
     bling_status_display.short_description = 'Status Bling'
 
     def sync_bling_agora(self, request, queryset):
-        """Action: sincronizar pedidos em trânsito do Bling agora."""
-        from bling.tasks import sync_empresa_pedidos_transito
+        """Action: sincronizar pedidos de todos os status configurados no Bling."""
+        from bling.tasks import sync_empresa_pedidos_por_status, BLING_STATUS_MAP
         for empresa in queryset:
-            if not empresa.bling_client_id or not empresa.bling_situacao_transito_id:
+            if not empresa.bling_client_id:
                 self.message_user(request, f"{empresa.nome}: Bling não configurado", messages.WARNING)
                 continue
-            try:
-                stats = sync_empresa_pedidos_transito(empresa)
+
+            total_enviados = 0
+            total_erros = 0
+            status_processados = []
+
+            for status, config in BLING_STATUS_MAP.items():
+                sit_id = getattr(empresa, config['campo_situacao'], '')
+                if not sit_id:
+                    continue
+                try:
+                    stats = sync_empresa_pedidos_por_status(empresa, status)
+                    total_enviados += stats['enviados']
+                    total_erros += stats['erros']
+                    if stats['total'] > 0:
+                        status_processados.append(f"{status}: {stats['enviados']}/{stats['total']}")
+                except Exception as e:
+                    total_erros += 1
+                    self.message_user(request, f"{empresa.nome} [{status}]: Erro - {e}", messages.ERROR)
+
+            if status_processados:
+                detail = " | ".join(status_processados)
                 self.message_user(
                     request,
-                    f"{empresa.nome}: {stats['enviados']} enviados, "
-                    f"{stats['ja_enviados']} já enviados, {stats['erros']} erros",
-                    messages.SUCCESS if stats['erros'] == 0 else messages.WARNING
+                    f"{empresa.nome}: {total_enviados} enviados ({detail})",
+                    messages.SUCCESS if total_erros == 0 else messages.WARNING
                 )
-            except Exception as e:
-                self.message_user(request, f"{empresa.nome}: Erro - {e}", messages.ERROR)
-    sync_bling_agora.short_description = 'Sincronizar Bling Agora'
+            else:
+                self.message_user(request, f"{empresa.nome}: Nenhum status configurado no Bling", messages.WARNING)
+    sync_bling_agora.short_description = 'Sincronizar Bling (todos status)'
 
     def has_module_permission(self, request):
         """Superusers ou usuarios vinculados a alguma empresa"""

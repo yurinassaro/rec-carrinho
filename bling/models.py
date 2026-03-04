@@ -35,6 +35,10 @@ class BlingPedidoEnviado(models.Model):
     numero_pedido = models.CharField(max_length=100)
     telefone = models.CharField(max_length=20)
     nome_cliente = models.CharField(max_length=200, blank=True)
+    status = models.CharField(
+        max_length=50, default='em-transito',
+        help_text='Status que gerou o envio (processando, embalado, em-transito, concluido, cancelado)'
+    )
     enviado_em = models.DateTimeField(auto_now_add=True)
     canal = models.CharField(
         max_length=20, default='meta',
@@ -46,7 +50,7 @@ class BlingPedidoEnviado(models.Model):
         db_table = 'bling_pedidos_enviados'
         verbose_name = 'Pedido Bling Enviado'
         verbose_name_plural = 'Pedidos Bling Enviados'
-        unique_together = ['empresa', 'bling_pedido_id']
+        unique_together = ['empresa', 'bling_pedido_id', 'status']
         ordering = ['-enviado_em']
 
     def __str__(self):
