@@ -141,6 +141,8 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
 
 # Celery Beat schedule
+from celery.schedules import crontab
+
 CELERY_BEAT_SCHEDULE = {
     'sync-bling-transito': {
         'task': 'bling.sync_pedidos_em_transito',
@@ -149,6 +151,10 @@ CELERY_BEAT_SCHEDULE = {
     'refresh-bling-tokens': {
         'task': 'bling.refresh_tokens',
         'schedule': 30 * 60,  # a cada 30 minutos
+    },
+    'enviar-promocoes-diarias': {
+        'task': 'customers.enviar_promocoes_diarias',
+        'schedule': crontab(hour=10, minute=0),  # todo dia as 10h
     },
 }
 
@@ -209,11 +215,6 @@ LOGGING = {
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
-            'formatter': 'verbose',
-        },
-        'file': {
-            'class': 'logging.FileHandler',
-            'filename': BASE_DIR / 'logs' / 'django.log',
             'formatter': 'verbose',
         },
     },

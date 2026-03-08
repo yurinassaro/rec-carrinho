@@ -15,15 +15,18 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Verificar se .env.production existe
-if [ ! -f .env.production ]; then
-    echo -e "${RED}Erro: .env.production nao encontrado!${NC}"
-    echo "Copie .env.production.example para .env.production e configure"
+# Verificar se .env.prod existe
+if [ ! -f .env.prod ]; then
+    echo -e "${RED}Erro: .env.prod nao encontrado!${NC}"
+    echo "Copie .env.prod.example para .env.prod e configure"
     exit 1
 fi
 
 # Carregar variaveis
-source .env.production
+source .env.prod
+
+# Usar docker-compose.prod.yml como arquivo principal
+export COMPOSE_FILE="docker-compose.prod.yml"
 
 # Criar diretorios necessarios
 echo -e "${YELLOW}Criando diretorios...${NC}"
