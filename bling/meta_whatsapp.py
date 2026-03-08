@@ -27,15 +27,18 @@ class MetaWhatsAppClient:
             'Content-Type': 'application/json',
         }
 
-    def enviar_template(self, telefone, template_name, parametros, language='pt_BR'):
+    def enviar_template(self, telefone, template_name, parametros,
+                        language='pt_BR', button_url_params=None):
         """
         Envia mensagem template aprovada pelo Meta.
 
         Args:
             telefone: Número com código do país (ex: 5516996056762)
             template_name: Nome do template aprovado no WhatsApp Manager
-            parametros: Lista de strings para substituir {{1}}, {{2}}, etc.
+            parametros: Lista de strings para substituir {{1}}, {{2}}, etc. no body
             language: Código do idioma do template
+            button_url_params: Lista de strings para URLs dinâmicas dos botões.
+                Ex: ['token123'] preenche {{1}} na URL do botão index 0.
         """
         if not self.esta_configurado():
             return {'success': False, 'error': 'Meta WhatsApp não configurado'}
@@ -50,6 +53,16 @@ class MetaWhatsAppClient:
                 'type': 'body',
                 'parameters': body_params,
             })
+
+        # Botões com URL dinâmica
+        if button_url_params:
+            for idx, param in enumerate(button_url_params):
+                components.append({
+                    'type': 'button',
+                    'sub_type': 'url',
+                    'index': str(idx),
+                    'parameters': [{'type': 'text', 'text': str(param)}],
+                })
 
         payload = {
             'messaging_product': 'whatsapp',

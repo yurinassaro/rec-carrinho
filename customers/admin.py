@@ -8,7 +8,7 @@ from django.views.decorators.csrf import csrf_exempt
 from import_export import resources
 from import_export.admin import ExportMixin
 from django.db.models import Count
-from .models import Customer, Cart, Order, CustomerAnalysis, Lead
+from .models import Customer, Cart, Order, CustomerAnalysis, Lead, MensagemWhatsApp
 from tenants.admin import TenantAdminMixin
 import json
 from datetime import datetime
@@ -912,3 +912,49 @@ class LeadAdmin(TenantAdminMixin, admin.ModelAdmin):
 
     class Media:
         js = ('admin/js/lead_admin.js',)
+
+
+@admin.register(MensagemWhatsApp)
+class MensagemWhatsAppAdmin(TenantAdminMixin, admin.ModelAdmin):
+    list_display = [
+        'destinatario_nome', 'destinatario_telefone', 'tipo',
+        'canal_badge', 'status_badge', 'template_name', 'created_at',
+    ]
+    list_filter = ['tipo', 'canal', 'status', 'created_at']
+    search_fields = ['destinatario_nome', 'destinatario_telefone', 'template_name']
+    readonly_fields = [
+        'empresa', 'tipo', 'canal', 'status',
+        'destinatario_nome', 'destinatario_telefone',
+        'template_name', 'template_params', 'mensagem_texto',
+        'error_message', 'api_response',
+        'lead', 'cart', 'customer', 'created_at',
+    ]
+    date_hierarchy = 'created_at'
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    def canal_badge(self, obj):
+        color = '#0084ff' if obj.canal == 'meta' else '#075E54'
+        label = 'Meta API' if obj.canal == 'meta' else 'W-API'
+        return format_html(
+            '<span style="background:{}; color:white; padding:2px 8px; '
+            'border-radius:3px; font-size:11px;">{}</span>',
+            color, label,
+        )
+    canal_badge.short_description = 'Canal'
+
+    def status_badge(self, obj):
+        colors = {
+            'enviado': '#4CAF50', 'falha': '#f44336',
+            'entregue': '#2196F3', 'lido': '#9C27B0',
+        }
+        return format_html(
+            '<span style="background:{}; color:white; padding:2px 8px; '
+            'border-radius:3px; font-size:11px;">{}</span>',
+            colors.get(obj.status, '#999'), obj.get_status_display(),
+        )
+    status_badge.short_description = 'Status'

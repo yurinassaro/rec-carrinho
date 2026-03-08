@@ -299,8 +299,61 @@ class Empresa(models.Model):
     )
     meta_template_transito = models.CharField(
         max_length=100, default='pedido_em_transito', blank=True,
-        verbose_name='Template Em Trânsito',
+        verbose_name='Template Em Transito',
         help_text='Nome do template aprovado no WhatsApp Manager'
+    )
+    meta_webhook_verify_token = models.CharField(
+        max_length=100, blank=True,
+        verbose_name='Webhook Verify Token',
+        help_text='Token para verificacao do webhook Meta (voce define, coloca o mesmo no Meta Business)'
+    )
+    meta_whatsapp_humano = models.CharField(
+        max_length=20, blank=True,
+        verbose_name='WhatsApp Humano (atendimento)',
+        help_text='Numero do atendente humano para encaminhar respostas (ex: 5516999999999)'
+    )
+    meta_template_lead_cliente = models.CharField(
+        max_length=100, default='promocoes_tarragona_leads_clientes', blank=True,
+        verbose_name='Template Lead Cliente',
+        help_text='Template para leads que ja sao clientes. Params: {{1}}=nome, {{2}}=cupom, {{3}}=desconto, {{4}}=validade'
+    )
+    meta_template_lead_nao_cliente = models.CharField(
+        max_length=100, default='promocoes_tarragona_leads_nao_clientes', blank=True,
+        verbose_name='Template Lead Nao Cliente',
+        help_text='Template para leads que nunca compraram. Params: {{1}}=nome, {{2}}=cupom, {{3}}=desconto, {{4}}=validade'
+    )
+    meta_template_cart = models.CharField(
+        max_length=100, default='carrinho_abandonado_sem_cupom', blank=True,
+        verbose_name='Template Carrinho Abandonado',
+        help_text='Template para recuperacao de carrinho. Body: {{1}}=nome. Botao URL dinamica: session_id do carrinho (wcf_ac_token)'
+    )
+
+    meta_template_lead_nao_cliente_cupom = models.CharField(
+        max_length=100, default='cupom_tarragona_leads_nao_clientes', blank=True,
+        verbose_name='Template Lead Nao Cliente (com cupom)',
+        help_text='Template com cupom para leads que nunca compraram (primeira compra). Params: {{1}}=nome, {{2}}=cupom, {{3}}=desconto, {{4}}=validade'
+    )
+    meta_template_cliente_inativo = models.CharField(
+        max_length=100, default='cupom_cliente_tarragona', blank=True,
+        verbose_name='Template Cliente Inativo',
+        help_text='Template para reativacao de clientes inativos. Params: {{1}}=nome, {{2}}=cupom, {{3}}=desconto, {{4}}=validade'
+    )
+
+    # Parametros dos templates Meta (cupom/desconto/validade)
+    meta_cupom_codigo = models.CharField(
+        max_length=50, default='cupom10', blank=True,
+        verbose_name='Codigo do Cupom',
+        help_text='Codigo do cupom para os templates Meta (ex: cupom10)'
+    )
+    meta_cupom_desconto = models.CharField(
+        max_length=10, default='10', blank=True,
+        verbose_name='% Desconto',
+        help_text='Percentual de desconto (ex: 10)'
+    )
+    meta_cupom_validade = models.CharField(
+        max_length=50, default='dia 23/07/2026', blank=True,
+        verbose_name='Validade do Cupom',
+        help_text='Data de validade do cupom (ex: dia 23/07/2026)'
     )
 
     # Configuracoes visuais

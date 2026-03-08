@@ -443,3 +443,109 @@ class Lead(models.Model):
             return True
 
         return False
+
+
+class MensagemWhatsApp(models.Model):
+    """Historico centralizado de todas as mensagens WhatsApp enviadas."""
+
+    TIPO_CHOICES = [
+        ('lead', 'Lead Novo (nao cliente)'),
+        ('lead_cliente', 'Lead Ja Cliente'),
+        ('cart', 'Carrinho Abandonado'),
+        ('cliente_inativo', 'Cliente Inativo (reativacao)'),
+        ('pedido_novo', 'Pedido Novo'),
+        ('pedido_processando', 'Pedido Processando'),
+        ('pedido_embalado', 'Pedido Embalado'),
+        ('pedido_transito', 'Pedido em Transito'),
+        ('pedido_concluido', 'Pedido Concluido'),
+        ('pedido_cancelado', 'Pedido Cancelado'),
+        ('resposta_cliente', 'Resposta do Cliente'),
+    ]
+
+    CANAL_CHOICES = [
+        ('meta', 'Meta Cloud API'),
+        ('wapi', 'W-API'),
+    ]
+
+    STATUS_CHOICES = [
+        ('enviado', 'Enviado'),
+        ('falha', 'Falha'),
+        ('entregue', 'Entregue'),
+        ('lido', 'Lido'),
+    ]
+
+    empresa = models.ForeignKey(
+        'tenants.Empresa',
+        on_delete=models.CASCADE,
+        related_name='mensagens_whatsapp',
+    )
+    tipo = models.CharField(max_length=30, choices=TIPO_CHOICES)
+    canal = models.CharField(max_length=10, choices=CANAL_CHOICES)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='enviado')
+
+    # Destinatario
+    destinatario_nome = models.CharField(max_length=200)
+    destinatario_telefone = models.CharField(max_length=20)
+
+    # Conteudo
+    template_name = models.CharField(
+        max_length=100, blank=True,
+        help_text='Nome do template Meta (se canal=meta)'
+    )
+    template_params = models.JSONField(
+        default=list, blank=True,
+        help_text='Parametros do template Meta'
+    )
+    mensagem_texto = models.TextField(
+        blank=True,
+        help_text='Texto da mensagem (se canal=wapi)'
+    )
+
+    # Resultado
+    error_message = models.TextField(blank=True)
+    api_response = models.JSONField(default=dict, blank=True)
+
+    # ID da mensagem no Meta (para rastrear status via webhook)
+    meta_message_id = models.CharField(
+        max_length=200, blank=True, db_index=True,
+        help_text='wamid retornado pela Meta API'
+    )
+
+    # Tracking de interacao (atualizado via webhook Meta)
+    entregue_em = models.DateTimeField(null=True, blank=True)
+    lido_em = models.DateTimeField(null=True, blank=True)
+    respondido = models.BooleanField(default=False)
+    respondido_em = models.DateTimeField(null=True, blank=True)
+    resposta_texto = models.TextField(blank=True)
+    clicou_link = models.BooleanField(default=False)
+    clicou_link_em = models.DateTimeField(null=True, blank=True)
+    encaminhado_humano = models.BooleanField(default=False)
+    encaminhado_humano_em = models.DateTimeField(null=True, blank=True)
+
+    # Relacionamentos opcionais
+    lead = models.ForeignKey(
+        Lead, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='mensagens_whatsapp',
+    )
+    cart = models.ForeignKey(
+        Cart, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='mensagens_whatsapp',
+    )
+    customer = models.ForeignKey(
+        Customer, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='mensagens_whatsapp',
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'mensagens_whatsapp'
+        verbose_name = 'Mensagem WhatsApp'
+        verbose_name_plural = 'Mensagens WhatsApp'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['empresa', 'tipo', '-created_at']),
+            models.Index(fields=['empresa', 'canal', '-created_at']),
+            models.Index(fields=['destinatario_telefone', '-created_at']),
+            models.Index(fields=['meta_message_id']),
+        ]

@@ -10,6 +10,7 @@ from django.http import JsonResponse
 from rest_framework import routers
 from customers.views import CustomerViewSet
 from customers.webhooks import woo_order_created, woo_order_updated
+from customers.webhooks_meta import meta_webhook
 
 # Configurar nome do Admin
 admin.site.site_header = 'Carrinho e Leads'
@@ -39,6 +40,8 @@ urlpatterns = [
     path('webhooks/woo/<slug:empresa_slug>/order-created', woo_order_created),
     path('webhooks/woo/<slug:empresa_slug>/order-updated/', woo_order_updated, name='woo_order_updated'),
     path('webhooks/woo/<slug:empresa_slug>/order-updated', woo_order_updated),
+    # Webhook Meta WhatsApp (recebe respostas e status updates)
+    path('webhooks/meta/', meta_webhook, name='meta_webhook'),
 ]
 
 # Servir arquivos de media em desenvolvimento

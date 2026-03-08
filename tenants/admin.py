@@ -179,6 +179,15 @@ class EmpresaAdmin(admin.ModelAdmin):
             'classes': ('collapse',),
             'description': 'Cloud API oficial do WhatsApp (Meta). Templates precisam ser aprovados no WhatsApp Manager.'
         }),
+        ('Meta Templates - Promocoes e Cupons', {
+            'fields': (
+                'meta_template_lead_cliente', 'meta_template_lead_nao_cliente',
+                'meta_template_lead_nao_cliente_cupom',
+                'meta_template_cart', 'meta_template_cliente_inativo',
+                'meta_cupom_codigo', 'meta_cupom_desconto', 'meta_cupom_validade',
+            ),
+            'description': 'Templates Meta para envio diario de promocoes (leads do dia anterior e carrinhos abandonados). Cron roda as 10h.'
+        }),
         ('Personalizacao', {
             'fields': ('timezone', 'logo', 'cor_primaria'),
             'classes': ('collapse',),
@@ -230,6 +239,15 @@ class EmpresaAdmin(admin.ModelAdmin):
                         'meta_template_transito'),
             'classes': ('collapse',),
             'description': 'Cloud API oficial do WhatsApp (Meta). Templates precisam ser aprovados no WhatsApp Manager.'
+        }),
+        ('Meta Templates - Promocoes e Cupons', {
+            'fields': (
+                'meta_template_lead_cliente', 'meta_template_lead_nao_cliente',
+                'meta_template_lead_nao_cliente_cupom',
+                'meta_template_cart', 'meta_template_cliente_inativo',
+                'meta_cupom_codigo', 'meta_cupom_desconto', 'meta_cupom_validade',
+            ),
+            'description': 'Templates Meta para envio diario de promocoes (leads do dia anterior e carrinhos abandonados). Cron roda as 10h.'
         }),
     )
 
