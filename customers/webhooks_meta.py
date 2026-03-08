@@ -243,3 +243,62 @@ def _process_incoming_message(message, contacts, empresa):
         lead=msg_original.lead if msg_original else None,
         cart=msg_original.cart if msg_original else None,
     )
+
+    # Encaminhar para atendente humano via W-API
+    _encaminhar_para_humano(empresa, from_number, nome, texto, msg_original)
+
+
+def _encaminhar_para_humano(empresa, telefone_cliente, nome_cliente,
+                            texto_resposta, msg_original):
+    """
+    Quando um cliente responde uma mensagem promocional,
+    envia notificacao para o WhatsApp humano da empresa
+    com os dados do cliente e a resposta.
+    """
+    whatsapp_humano = getattr(empresa, 'meta_whatsapp_humano', '')
+    if not whatsapp_humano:
+        logger.info(f'[{empresa.slug}] Sem WhatsApp humano configurado, resposta nao encaminhada')
+        return
+
+    # Montar mensagem para o atendente
+    tipo_original = ''
+    template_original = ''
+    if msg_original:
+        tipo_original = msg_original.get_tipo_display()
+        template_original = msg_original.template_name
+
+    mensagem = (
+        f"*Nova resposta de cliente!*\n\n"
+        f"*Cliente:* {nome_cliente}\n"
+        f"*Telefone:* {telefone_cliente}\n"
+        f"*Respondeu a:* {tipo_original}"
+    )
+    if template_original:
+        mensagem += f" ({template_original})"
+    mensagem += f"\n\n*Mensagem:*\n{texto_resposta}\n\n"
+    mensagem += f"Responda diretamente: https://wa.me/{telefone_cliente}"
+
+    # Enviar via W-API (atendente humano usa W-API)
+    from customers.services.wapi import _get_wapi_client
+    client = _get_wapi_client(empresa, 'lead')
+    if client.esta_configurado():
+        resultado = client.enviar_mensagem(whatsapp_humano, mensagem)
+        if resultado.get('success'):
+            # Marcar a mensagem original como encaminhada
+            if msg_original:
+                msg_original.encaminhado_humano = True
+                msg_original.encaminhado_humano_em = timezone.now()
+                msg_original.save(update_fields=[
+                    'encaminhado_humano', 'encaminhado_humano_em',
+                ])
+            logger.info(
+                f'[{empresa.slug}] Resposta de {telefone_cliente} '
+                f'encaminhada para humano {whatsapp_humano}'
+            )
+        else:
+            logger.error(
+                f'[{empresa.slug}] Erro ao encaminhar para humano: '
+                f'{resultado.get("error")}'
+            )
+    else:
+        logger.warning(f'[{empresa.slug}] W-API nao configurado para encaminhar resposta')
