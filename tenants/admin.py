@@ -175,8 +175,8 @@ class EmpresaAdmin(admin.ModelAdmin):
         }),
         ('Meta WhatsApp Business API', {
             'fields': ('meta_waba_id', 'meta_phone_number_id', 'meta_access_token',
-                        'meta_template_transito'),
-            'classes': ('collapse',),
+                        'meta_template_transito', 'meta_webhook_verify_token',
+                        'meta_whatsapp_humano'),
             'description': 'Cloud API oficial do WhatsApp (Meta). Templates precisam ser aprovados no WhatsApp Manager.'
         }),
         ('Meta Templates - Promocoes e Cupons', {
@@ -236,8 +236,8 @@ class EmpresaAdmin(admin.ModelAdmin):
         }),
         ('Meta WhatsApp Business API', {
             'fields': ('meta_waba_id', 'meta_phone_number_id', 'meta_access_token',
-                        'meta_template_transito'),
-            'classes': ('collapse',),
+                        'meta_template_transito', 'meta_webhook_verify_token',
+                        'meta_whatsapp_humano'),
             'description': 'Cloud API oficial do WhatsApp (Meta). Templates precisam ser aprovados no WhatsApp Manager.'
         }),
         ('Meta Templates - Promocoes e Cupons', {
