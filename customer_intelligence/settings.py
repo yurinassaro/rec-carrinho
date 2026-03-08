@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'importer',
     'marketing',
     'bling',
+    'comunicacao',
 ]
 
 MIDDLEWARE = [
@@ -155,6 +156,19 @@ CELERY_BEAT_SCHEDULE = {
     'enviar-promocoes-diarias': {
         'task': 'customers.enviar_promocoes_diarias',
         'schedule': crontab(hour=10, minute=0),  # todo dia as 10h
+    },
+    # Motor de Réguas
+    'processar-fila-envio': {
+        'task': 'comunicacao.processar_fila_envio',
+        'schedule': 2 * 60,  # a cada 2 minutos
+    },
+    'avaliar-regras-periodicas': {
+        'task': 'comunicacao.avaliar_regras_periodicas',
+        'schedule': crontab(minute=0),  # a cada hora cheia
+    },
+    'atualizar-stats-regras': {
+        'task': 'comunicacao.atualizar_stats_regras',
+        'schedule': crontab(hour=23, minute=0),  # todo dia as 23h
     },
 }
 

@@ -11,6 +11,7 @@ from rest_framework import routers
 from customers.views import CustomerViewSet
 from customers.webhooks import woo_order_created, woo_order_updated
 from customers.webhooks_meta import meta_webhook
+from comunicacao.api import receber_evento
 
 # Configurar nome do Admin
 admin.site.site_header = 'Carrinho e Leads'
@@ -42,6 +43,8 @@ urlpatterns = [
     path('webhooks/woo/<slug:empresa_slug>/order-updated', woo_order_updated),
     # Webhook Meta WhatsApp (recebe respostas e status updates)
     path('webhooks/meta/', meta_webhook, name='meta_webhook'),
+    # API genérica de eventos (multi-plataforma)
+    path('api/v1/events/', receber_evento, name='api_events'),
 ]
 
 # Servir arquivos de media em desenvolvimento
