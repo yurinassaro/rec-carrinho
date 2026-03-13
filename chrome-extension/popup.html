@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 320px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f2f5;
+      color: #333;
+    }
+    .header {
+      background: #25D366;
+      color: white;
+      padding: 16px;
+      text-align: center;
+    }
+    .header h1 {
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .header p {
+      font-size: 11px;
+      opacity: 0.9;
+      margin-top: 4px;
+    }
+    .form {
+      padding: 16px;
+    }
+    .field {
+      margin-bottom: 12px;
+    }
+    .field label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: #555;
+      margin-bottom: 4px;
+    }
+    .field input {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+      transition: border 0.2s;
+    }
+    .field input:focus {
+      border-color: #25D366;
+    }
+    .field small {
+      display: block;
+      color: #888;
+      font-size: 10px;
+      margin-top: 2px;
+    }
+    .btn {
+      width: 100%;
+      padding: 10px;
+      background: #25D366;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .btn:hover { background: #1ea952; }
+    .status {
+      text-align: center;
+      padding: 8px;
+      font-size: 12px;
+      color: #25D366;
+      font-weight: 500;
+      display: none;
+    }
+    .status.show { display: block; }
+    .status.error { color: #dc3545; }
+    .api-key-info {
+      background: #e8f5e9;
+      border-radius: 6px;
+      padding: 10px;
+      margin-top: 12px;
+      font-size: 11px;
+      color: #555;
+      line-height: 1.4;
+    }
+    .api-key-info code {
+      background: #c8e6c9;
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-size: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>CRM WhatsApp</h1>
+    <p>Salvar contatos no Customer Intelligence</p>
+  </div>
+
+  <div class="form">
+    <div class="field">
+      <label>URL do CRM</label>
+      <input type="url" id="crmUrl" placeholder="https://seudominio.com">
+      <small>URL do seu Customer Intelligence</small>
+    </div>
+
+    <div class="field">
+      <label>Slug da Empresa</label>
+      <input type="text" id="empresaSlug" placeholder="minha-empresa">
+      <small>Slug cadastrado no admin</small>
+    </div>
+
+    <div class="field">
+      <label>API Key</label>
+      <input type="password" id="apiKey" placeholder="sua-api-key-aqui">
+      <small>Chave de autenticação</small>
+    </div>
+
+    <button class="btn" id="saveBtn">Salvar Configurações</button>
+
+    <div class="status" id="status"></div>
+
+    <div class="api-key-info">
+      <strong>Como gerar a API Key:</strong><br>
+      No terminal do servidor, rode:<br>
+      <code>python manage.py generate_api_key SLUG</code><br>
+      Onde SLUG é o slug da empresa.
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

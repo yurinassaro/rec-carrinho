@@ -11,6 +11,7 @@ from rest_framework import routers
 from customers.views import CustomerViewSet
 from customers.webhooks import woo_order_created, woo_order_updated
 from customers.webhooks_meta import meta_webhook
+from customers.api_chrome_extension import chrome_extension_lead, chrome_extension_check
 from comunicacao.api import receber_evento
 
 # Configurar nome do Admin
@@ -43,6 +44,9 @@ urlpatterns = [
     path('webhooks/woo/<slug:empresa_slug>/order-updated', woo_order_updated),
     # Webhook Meta WhatsApp (recebe respostas e status updates)
     path('webhooks/meta/', meta_webhook, name='meta_webhook'),
+    # API Chrome Extension - WhatsApp Web
+    path('api/v1/leads/chrome-extension/<slug:empresa_slug>/', chrome_extension_lead, name='chrome_ext_lead'),
+    path('api/v1/leads/chrome-extension/<slug:empresa_slug>/check/', chrome_extension_check, name='chrome_ext_check'),
     # API genérica de eventos (multi-plataforma)
     path('api/v1/events/', receber_evento, name='api_events'),
 ]

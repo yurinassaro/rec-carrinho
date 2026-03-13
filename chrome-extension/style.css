@@ -1,0 +1,73 @@
+/* Botão CRM no WhatsApp Web */
+#crm-save-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: #25D366;
+  color: white;
+  border: none;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-left: 8px;
+  white-space: nowrap;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+#crm-save-btn:hover {
+  background: #1ea952;
+  transform: scale(1.02);
+}
+
+#crm-save-btn.crm-saving {
+  background: #f0b429;
+  cursor: wait;
+}
+
+#crm-save-btn.crm-saved {
+  background: #0088cc;
+}
+
+#crm-save-btn.crm-exists {
+  background: #6c757d;
+}
+
+#crm-save-btn.crm-error {
+  background: #dc3545;
+}
+
+/* Tooltip/feedback */
+#crm-feedback {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  padding: 12px 20px;
+  border-radius: 8px;
+  color: white;
+  font-size: 14px;
+  font-weight: 500;
+  z-index: 99999;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+#crm-feedback.show {
+  opacity: 1;
+}
+
+#crm-feedback.success {
+  background: #25D366;
+}
+
+#crm-feedback.error {
+  background: #dc3545;
+}
+
+#crm-feedback.info {
+  background: #0088cc;
+}
