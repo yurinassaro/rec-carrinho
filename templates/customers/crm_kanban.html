@@ -1,0 +1,1026 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CRM - {{ empresa.nome }}</title>
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --bg-card: #1a1d27;
+      --bg-column: #141620;
+      --bg-hover: #242736;
+      --text: #e4e6eb;
+      --text-secondary: #8b8fa3;
+      --border: #2a2d3a;
+      --accent: #6366f1;
+      --accent-hover: #818cf8;
+      --green: #22c55e;
+      --orange: #f59e0b;
+      --red: #ef4444;
+      --shadow: 0 4px 24px rgba(0,0,0,0.4);
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ===== TOPBAR ===== */
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 24px;
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .topbar-logo {
+      font-size: 20px;
+      font-weight: 800;
+      background: linear-gradient(135deg, var(--accent), #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .topbar-empresa {
+      font-size: 14px;
+      color: var(--text-secondary);
+      padding-left: 16px;
+      border-left: 1px solid var(--border);
+    }
+
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    /* ===== STATS BAR ===== */
+    .stats-bar {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      padding: 12px 24px;
+      background: var(--bg-column);
+      border-bottom: 1px solid var(--border);
+    }
+    .stat-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .stat-value {
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .stat-label {
+      font-size: 12px;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .stat-divider {
+      width: 1px;
+      height: 32px;
+      background: var(--border);
+    }
+
+    /* ===== PIPELINE TABS ===== */
+    .pipeline-tabs {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 24px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+    }
+    .pipeline-tab {
+      padding: 8px 20px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      cursor: pointer;
+      text-decoration: none;
+      white-space: nowrap;
+      transition: all 0.2s;
+    }
+    .pipeline-tab:hover {
+      background: var(--bg-hover);
+      color: var(--text);
+    }
+    .pipeline-tab.active {
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+    }
+    .pipeline-tab.add-new {
+      border-style: dashed;
+      color: var(--accent);
+    }
+    .pipeline-tab.add-new:hover {
+      background: rgba(99, 102, 241, 0.1);
+    }
+
+    /* ===== KANBAN BOARD ===== */
+    .kanban-board {
+      display: flex;
+      gap: 16px;
+      padding: 20px 24px;
+      overflow-x: auto;
+      min-height: calc(100vh - 200px);
+      align-items: flex-start;
+    }
+
+    .kanban-column {
+      min-width: 300px;
+      max-width: 300px;
+      background: var(--bg-column);
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      max-height: calc(100vh - 220px);
+    }
+
+    .column-header {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+    .column-header-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .column-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .column-name {
+      font-size: 14px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .column-count {
+      background: var(--bg-hover);
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+    .column-valor {
+      font-size: 11px;
+      color: var(--green);
+      font-weight: 600;
+    }
+
+    .column-cards {
+      padding: 8px;
+      overflow-y: auto;
+      flex: 1;
+      min-height: 60px;
+    }
+    .column-cards.drag-over {
+      background: rgba(99, 102, 241, 0.05);
+      border: 2px dashed var(--accent);
+      border-radius: 8px;
+      margin: 4px;
+    }
+
+    /* ===== CARDS ===== */
+    .crm-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 8px;
+      cursor: grab;
+      transition: all 0.15s;
+      position: relative;
+    }
+    .crm-card:hover {
+      border-color: var(--accent);
+      box-shadow: 0 2px 12px rgba(99, 102, 241, 0.15);
+      transform: translateY(-1px);
+    }
+    .crm-card.dragging {
+      opacity: 0.5;
+      transform: rotate(2deg);
+    }
+    .crm-card-name {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .crm-card-info {
+      font-size: 12px;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 4px;
+    }
+    .crm-card-tags {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+    .crm-card-tag {
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: rgba(99, 102, 241, 0.15);
+      color: var(--accent-hover);
+    }
+    .crm-card-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+    }
+    .crm-card-valor {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--green);
+    }
+    .crm-card-date {
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+    .crm-card-priority {
+      position: absolute;
+      top: 0;
+      right: 14px;
+      width: 6px;
+      height: 24px;
+      border-radius: 0 0 3px 3px;
+    }
+    .priority-baixa { background: var(--green); }
+    .priority-media { background: #3b82f6; }
+    .priority-alta { background: var(--orange); }
+    .priority-urgente { background: var(--red); }
+
+    .crm-card-actions {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      display: none;
+      gap: 4px;
+    }
+    .crm-card:hover .crm-card-actions {
+      display: flex;
+    }
+    .crm-card-action {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      border: none;
+      background: var(--bg-hover);
+      color: var(--text-secondary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      transition: all 0.15s;
+    }
+    .crm-card-action:hover {
+      background: var(--accent);
+      color: white;
+    }
+    .crm-card-action.delete:hover {
+      background: var(--red);
+    }
+
+    /* ===== ADD CARD BUTTON ===== */
+    .add-card-btn {
+      width: 100%;
+      padding: 10px;
+      border: 1px dashed var(--border);
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text-secondary);
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-top: 4px;
+      flex-shrink: 0;
+    }
+    .add-card-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(99, 102, 241, 0.05);
+    }
+
+    /* ===== BUTTONS ===== */
+    .btn {
+      padding: 8px 18px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+    }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-secondary {
+      background: var(--bg-hover);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover { background: var(--border); }
+    .btn-danger {
+      background: var(--red);
+      color: white;
+    }
+    .btn-danger:hover { background: #dc2626; }
+    .btn-whatsapp {
+      background: #25D366;
+      color: white;
+      padding: 4px 10px;
+      font-size: 12px;
+      border-radius: 6px;
+    }
+
+    /* ===== MODAL ===== */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay.active {
+      display: flex;
+    }
+    .modal {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      width: 480px;
+      max-width: 95vw;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: var(--shadow);
+    }
+    .modal-header {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .modal-title {
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--text-secondary);
+      font-size: 24px;
+      cursor: pointer;
+      padding: 0 4px;
+    }
+    .modal-close:hover { color: var(--text); }
+    .modal-body {
+      padding: 24px;
+    }
+    .modal-footer {
+      padding: 16px 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    /* ===== FORM FIELDS ===== */
+    .form-group {
+      margin-bottom: 16px;
+    }
+    .form-group label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+      width: 100%;
+      padding: 10px 14px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 14px;
+      font-family: inherit;
+      outline: none;
+      transition: border 0.2s;
+    }
+    .form-group input:focus,
+    .form-group select:focus,
+    .form-group textarea:focus {
+      border-color: var(--accent);
+    }
+    .form-group textarea {
+      resize: vertical;
+      min-height: 60px;
+    }
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    /* ===== EMPTY STATE ===== */
+    .empty-state {
+      text-align: center;
+      padding: 60px 40px;
+    }
+    .empty-state-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+    .empty-state h2 {
+      font-size: 22px;
+      margin-bottom: 8px;
+    }
+    .empty-state p {
+      color: var(--text-secondary);
+      margin-bottom: 24px;
+    }
+
+    /* ===== TOAST ===== */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      padding: 12px 20px;
+      border-radius: 10px;
+      color: white;
+      font-size: 14px;
+      font-weight: 500;
+      z-index: 2000;
+      opacity: 0;
+      transform: translateY(20px);
+      transition: all 0.3s;
+      box-shadow: var(--shadow);
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .toast.success { background: var(--green); }
+    .toast.error { background: var(--red); }
+    .toast.info { background: var(--accent); }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+
+    /* Back link */
+    .back-link {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .back-link:hover { color: var(--text); }
+  </style>
+</head>
+<body>
+
+  <!-- TOPBAR -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <a href="/admin/" class="back-link">&#8592; Admin</a>
+      <span class="topbar-logo">CRM</span>
+      <span class="topbar-empresa">{{ empresa.nome }}</span>
+    </div>
+    <div class="topbar-right">
+      <button class="btn btn-primary" onclick="openNewContactModal()">+ Novo Contato</button>
+    </div>
+  </div>
+
+  <!-- STATS BAR -->
+  <div class="stats-bar">
+    <div class="stat-item">
+      <div>
+        <div class="stat-value">{{ total_contatos }}</div>
+        <div class="stat-label">Contatos</div>
+      </div>
+    </div>
+    <div class="stat-divider"></div>
+    <div class="stat-item">
+      <div>
+        <div class="stat-value" style="color: var(--green)">R$ {{ total_valor|floatformat:0 }}</div>
+        <div class="stat-label">Valor Total</div>
+      </div>
+    </div>
+    <div class="stat-divider"></div>
+    <div class="stat-item">
+      <div>
+        <div class="stat-value" style="color: var(--accent)">{{ contatos_hoje }}</div>
+        <div class="stat-label">Hoje</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PIPELINE TABS -->
+  <div class="pipeline-tabs">
+    {% for p in pipelines %}
+      <a href="?pipeline={{ p.id }}"
+         class="pipeline-tab {% if pipeline_atual and pipeline_atual.id == p.id %}active{% endif %}">
+        {{ p.nome }}
+      </a>
+    {% endfor %}
+    <button class="pipeline-tab add-new" onclick="openNewPipelineModal()">+ Novo Pipeline</button>
+  </div>
+
+  {% if pipeline_atual %}
+  <!-- KANBAN BOARD -->
+  <div class="kanban-board">
+    {% for data in etapas_data %}
+    <div class="kanban-column" data-etapa-id="{{ data.etapa.id }}">
+      <div class="column-header">
+        <div class="column-header-left">
+          <div class="column-dot" style="background: {{ data.etapa.cor }}"></div>
+          <span class="column-name">{{ data.etapa.nome }}</span>
+          <span class="column-count">{{ data.total }}</span>
+        </div>
+        {% if data.valor_total %}
+        <span class="column-valor">R$ {{ data.valor_total|floatformat:0 }}</span>
+        {% endif %}
+      </div>
+
+      <div class="column-cards"
+           ondragover="handleDragOver(event)"
+           ondragleave="handleDragLeave(event)"
+           ondrop="handleDrop(event, {{ data.etapa.id }})">
+
+        {% for contato in data.contatos %}
+        <div class="crm-card"
+             draggable="true"
+             data-contato-id="{{ contato.id }}"
+             ondragstart="handleDragStart(event, {{ contato.id }})"
+             ondragend="handleDragEnd(event)">
+
+          <div class="crm-card-priority priority-{{ contato.prioridade }}"></div>
+
+          <div class="crm-card-actions">
+            <button class="crm-card-action" onclick="openEditModal({{ contato.id }})" title="Editar">&#9998;</button>
+            {% if contato.telefone %}
+            <a href="https://wa.me/{{ contato.telefone }}" target="_blank"
+               class="crm-card-action" title="WhatsApp" style="text-decoration:none">&#128172;</a>
+            {% endif %}
+            <button class="crm-card-action delete" onclick="deleteContato({{ contato.id }}, '{{ contato.nome|escapejs }}')" title="Excluir">&#10005;</button>
+          </div>
+
+          <div class="crm-card-name">{{ contato.nome }}</div>
+
+          {% if contato.empresa_contato %}
+          <div class="crm-card-info">&#127970; {{ contato.empresa_contato }}</div>
+          {% endif %}
+
+          {% if contato.telefone %}
+          <div class="crm-card-info">&#128222; {{ contato.telefone }}</div>
+          {% endif %}
+
+          {% if contato.email %}
+          <div class="crm-card-info">&#128231; {{ contato.email }}</div>
+          {% endif %}
+
+          {% if contato.notas %}
+          <div class="crm-card-info" style="margin-top:6px; font-style:italic; color: var(--text-secondary);">{{ contato.notas|truncatechars:80 }}</div>
+          {% endif %}
+
+          {% if contato.tags %}
+          <div class="crm-card-tags">
+            {% for tag in contato.tags %}
+            <span class="crm-card-tag">{{ tag }}</span>
+            {% endfor %}
+          </div>
+          {% endif %}
+
+          <div class="crm-card-footer">
+            {% if contato.valor_estimado %}
+            <span class="crm-card-valor">R$ {{ contato.valor_estimado|floatformat:0 }}</span>
+            {% else %}
+            <span></span>
+            {% endif %}
+            <span class="crm-card-date">{{ contato.created_at|date:"d/m/Y" }}</span>
+          </div>
+        </div>
+        {% empty %}
+        <div style="text-align:center; padding: 20px; color: var(--text-secondary); font-size: 13px;">
+          Nenhum contato
+        </div>
+        {% endfor %}
+      </div>
+
+      <div style="padding: 8px; flex-shrink: 0;">
+        <button class="add-card-btn" onclick="openNewContactModal({{ data.etapa.id }})">+ Adicionar</button>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% else %}
+  <!-- EMPTY STATE -->
+  <div class="empty-state">
+    <div class="empty-state-icon">&#128200;</div>
+    <h2>Nenhum pipeline criado</h2>
+    <p>Crie seu primeiro pipeline de vendas para comecar a gerenciar seus contatos.</p>
+    <button class="btn btn-primary" onclick="openNewPipelineModal()" style="font-size:16px; padding: 12px 32px;">
+      + Criar Pipeline
+    </button>
+  </div>
+  {% endif %}
+
+  <!-- TOAST -->
+  <div class="toast" id="toast"></div>
+
+  <!-- MODAL: Novo Contato -->
+  <div class="modal-overlay" id="contactModal">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title" id="contactModalTitle">Novo Contato</span>
+        <button class="modal-close" onclick="closeModal('contactModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="edit-contato-id">
+        <div class="form-group">
+          <label>Nome *</label>
+          <input type="text" id="f-nome" placeholder="Nome do contato">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Telefone</label>
+            <input type="text" id="f-telefone" placeholder="DDD + Numero">
+          </div>
+          <div class="form-group">
+            <label>Email</label>
+            <input type="email" id="f-email" placeholder="email@exemplo.com">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Empresa</label>
+            <input type="text" id="f-empresa" placeholder="Empresa do contato">
+          </div>
+          <div class="form-group">
+            <label>Valor Estimado (R$)</label>
+            <input type="number" id="f-valor" placeholder="0.00" step="0.01">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Prioridade</label>
+            <select id="f-prioridade">
+              <option value="baixa">Baixa</option>
+              <option value="media" selected>Media</option>
+              <option value="alta">Alta</option>
+              <option value="urgente">Urgente</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Etapa</label>
+            <select id="f-etapa">
+              {% if pipeline_atual %}
+              {% for data in etapas_data %}
+              <option value="{{ data.etapa.id }}">{{ data.etapa.nome }}</option>
+              {% endfor %}
+              {% endif %}
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Responsavel</label>
+          <input type="text" id="f-responsavel" placeholder="Quem vai atender">
+        </div>
+        <div class="form-group">
+          <label>Notas</label>
+          <textarea id="f-notas" placeholder="Observacoes sobre o contato..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('contactModal')">Cancelar</button>
+        <button class="btn btn-primary" id="contactSaveBtn" onclick="saveContact()">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Novo Pipeline -->
+  <div class="modal-overlay" id="pipelineModal">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title">Novo Pipeline</span>
+        <button class="modal-close" onclick="closeModal('pipelineModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Nome do Pipeline *</label>
+          <input type="text" id="p-nome" placeholder="Ex: Vendas, Atacado, Projetos...">
+        </div>
+        <div class="form-group">
+          <label>Etapas (serao criadas automaticamente)</label>
+          <div style="background: var(--bg); border-radius: 8px; padding: 12px; font-size: 13px; color: var(--text-secondary);">
+            Novo &#8594; Conversando &#8594; Proposta &#8594; Negociando &#8594; Fechado / Perdido
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('pipelineModal')">Cancelar</button>
+        <button class="btn btn-primary" onclick="savePipeline()">Criar Pipeline</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const CSRF_TOKEN = '{{ csrf_token }}';
+    const PIPELINE_ID = {{ pipeline_atual.id|default:"null" }};
+    let draggedContatoId = null;
+
+    // ===== DRAG & DROP =====
+    function handleDragStart(e, contatoId) {
+      draggedContatoId = contatoId;
+      e.target.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    }
+
+    function handleDragEnd(e) {
+      e.target.classList.remove('dragging');
+      document.querySelectorAll('.column-cards').forEach(c => c.classList.remove('drag-over'));
+    }
+
+    function handleDragOver(e) {
+      e.preventDefault();
+      e.currentTarget.classList.add('drag-over');
+    }
+
+    function handleDragLeave(e) {
+      e.currentTarget.classList.remove('drag-over');
+    }
+
+    function handleDrop(e, etapaId) {
+      e.preventDefault();
+      e.currentTarget.classList.remove('drag-over');
+      if (!draggedContatoId) return;
+
+      fetch('/crm/api/mover/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': CSRF_TOKEN,
+        },
+        body: JSON.stringify({
+          contato_id: draggedContatoId,
+          etapa_id: etapaId,
+        }),
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.status === 'ok') {
+          showToast(`Movido para ${data.etapa}`, 'success');
+          // Move o card visualmente
+          const card = document.querySelector(`[data-contato-id="${draggedContatoId}"]`);
+          if (card) {
+            e.currentTarget.insertBefore(card, e.currentTarget.firstChild);
+          }
+        } else {
+          showToast(data.error || 'Erro ao mover', 'error');
+        }
+      })
+      .catch(() => showToast('Erro de conexao', 'error'));
+
+      draggedContatoId = null;
+    }
+
+    // ===== MODALS =====
+    function openModal(id) {
+      document.getElementById(id).classList.add('active');
+    }
+    function closeModal(id) {
+      document.getElementById(id).classList.remove('active');
+    }
+
+    function openNewContactModal(etapaId) {
+      document.getElementById('contactModalTitle').textContent = 'Novo Contato';
+      document.getElementById('edit-contato-id').value = '';
+      document.getElementById('f-nome').value = '';
+      document.getElementById('f-telefone').value = '';
+      document.getElementById('f-email').value = '';
+      document.getElementById('f-empresa').value = '';
+      document.getElementById('f-valor').value = '';
+      document.getElementById('f-prioridade').value = 'media';
+      document.getElementById('f-responsavel').value = '';
+      document.getElementById('f-notas').value = '';
+      if (etapaId) {
+        document.getElementById('f-etapa').value = etapaId;
+      }
+      document.getElementById('contactSaveBtn').textContent = 'Salvar';
+      openModal('contactModal');
+    }
+
+    async function openEditModal(contatoId) {
+      try {
+        const resp = await fetch(`/crm/api/contato/${contatoId}/`, {
+          headers: { 'X-CSRFToken': CSRF_TOKEN },
+        });
+        const data = await resp.json();
+
+        document.getElementById('contactModalTitle').textContent = 'Editar Contato';
+        document.getElementById('edit-contato-id').value = contatoId;
+        document.getElementById('f-nome').value = data.nome || '';
+        document.getElementById('f-telefone').value = data.telefone || '';
+        document.getElementById('f-email').value = data.email || '';
+        document.getElementById('f-empresa').value = data.empresa_contato || '';
+        document.getElementById('f-valor').value = data.valor_estimado || '';
+        document.getElementById('f-prioridade').value = data.prioridade || 'media';
+        document.getElementById('f-responsavel').value = data.responsavel || '';
+        document.getElementById('f-notas').value = data.notas || '';
+        if (data.etapa_id) {
+          document.getElementById('f-etapa').value = data.etapa_id;
+        }
+        document.getElementById('contactSaveBtn').textContent = 'Atualizar';
+        openModal('contactModal');
+      } catch (e) {
+        showToast('Erro ao carregar contato', 'error');
+      }
+    }
+
+    function openNewPipelineModal() {
+      document.getElementById('p-nome').value = '';
+      openModal('pipelineModal');
+    }
+
+    // ===== SAVE / EDIT =====
+    function saveContact() {
+      const editId = document.getElementById('edit-contato-id').value;
+      const nome = document.getElementById('f-nome').value.trim();
+
+      if (!nome) {
+        showToast('Nome e obrigatorio', 'error');
+        return;
+      }
+
+      const body = {
+        nome: nome,
+        telefone: document.getElementById('f-telefone').value.trim(),
+        email: document.getElementById('f-email').value.trim(),
+        empresa_contato: document.getElementById('f-empresa').value.trim(),
+        notas: document.getElementById('f-notas').value.trim(),
+        prioridade: document.getElementById('f-prioridade').value,
+        responsavel: document.getElementById('f-responsavel').value.trim(),
+      };
+
+      const valor = document.getElementById('f-valor').value;
+      if (valor) body.valor_estimado = parseFloat(valor);
+
+      if (editId) {
+        // Editar
+        body.contato_id = parseInt(editId);
+        fetch('/crm/api/contato/editar/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
+          body: JSON.stringify(body),
+        })
+        .then(r => r.json())
+        .then(data => {
+          if (data.status === 'ok') {
+            showToast('Contato atualizado', 'success');
+            closeModal('contactModal');
+            location.reload();
+          } else {
+            showToast(data.error || 'Erro', 'error');
+          }
+        });
+      } else {
+        // Criar
+        body.pipeline_id = PIPELINE_ID;
+        body.etapa_id = parseInt(document.getElementById('f-etapa').value);
+        fetch('/crm/api/contato/criar/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
+          body: JSON.stringify(body),
+        })
+        .then(r => r.json())
+        .then(data => {
+          if (data.status === 'created') {
+            showToast(`${data.contato.nome} adicionado`, 'success');
+            closeModal('contactModal');
+            location.reload();
+          } else {
+            showToast(data.error || 'Erro', 'error');
+          }
+        });
+      }
+    }
+
+    function savePipeline() {
+      const nome = document.getElementById('p-nome').value.trim();
+      if (!nome) {
+        showToast('Nome e obrigatorio', 'error');
+        return;
+      }
+
+      fetch('/crm/api/pipeline/criar/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
+        body: JSON.stringify({ nome }),
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.status === 'created') {
+          showToast(`Pipeline "${data.pipeline.nome}" criado`, 'success');
+          closeModal('pipelineModal');
+          window.location.href = `/crm/?pipeline=${data.pipeline.id}`;
+        } else {
+          showToast(data.error || 'Erro', 'error');
+        }
+      });
+    }
+
+    function deleteContato(id, nome) {
+      if (!confirm(`Remover "${nome}" do pipeline?`)) return;
+
+      fetch('/crm/api/contato/deletar/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
+        body: JSON.stringify({ contato_id: id }),
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.status === 'deleted') {
+          const card = document.querySelector(`[data-contato-id="${id}"]`);
+          if (card) card.remove();
+          showToast('Contato removido', 'success');
+        }
+      });
+    }
+
+    // ===== TOAST =====
+    function showToast(msg, type) {
+      const toast = document.getElementById('toast');
+      toast.textContent = msg;
+      toast.className = `toast show ${type}`;
+      setTimeout(() => { toast.className = 'toast'; }, 3000);
+    }
+
+    // Fechar modal com Escape
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') {
+        document.querySelectorAll('.modal-overlay.active').forEach(m => m.classList.remove('active'));
+      }
+    });
+
+    // Fechar modal clicando no backdrop
+    document.querySelectorAll('.modal-overlay').forEach(overlay => {
+      overlay.addEventListener('click', e => {
+        if (e.target === overlay) overlay.classList.remove('active');
+      });
+    });
+  </script>
+</body>
+</html>

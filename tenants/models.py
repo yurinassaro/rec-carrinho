@@ -110,6 +110,26 @@ class Empresa(models.Model):
         help_text='Prefixo das tabelas WordPress (ex: wp_)'
     )
 
+    # WooCommerce REST API
+    woo_store_url = models.URLField(
+        max_length=300,
+        blank=True,
+        verbose_name='URL da Loja',
+        help_text='URL do WooCommerce (ex: https://tarragona.com.br)'
+    )
+    woo_consumer_key = models.CharField(
+        max_length=200,
+        blank=True,
+        verbose_name='Consumer Key',
+        help_text='Consumer Key da API REST WooCommerce (WooCommerce > Settings > Advanced > REST API)'
+    )
+    woo_consumer_secret = models.CharField(
+        max_length=200,
+        blank=True,
+        verbose_name='Consumer Secret',
+        help_text='Consumer Secret da API REST WooCommerce'
+    )
+
     # Webhook WooCommerce
     woo_webhook_secret = models.CharField(
         max_length=200,
@@ -399,6 +419,11 @@ class Empresa(models.Model):
     def get_full_domain(self):
         """Retorna dominio completo"""
         return f"{self.dominio}.posvendafacil.com.br"
+
+    @property
+    def has_woocommerce_api(self):
+        """Verifica se tem configuracao WooCommerce REST API"""
+        return all([self.woo_store_url, self.woo_consumer_key, self.woo_consumer_secret])
 
     @property
     def has_woocommerce_config(self):

@@ -1,14 +1,14 @@
 /**
  * CRM WhatsApp Web Extension
- * Injeta botão "Salvar no CRM" no header do chat aberto.
+ * Injeta botão "Salvar no CRM" com formulário de pipeline.
  */
 
 (function () {
   "use strict";
 
-  let currentPhone = null;
-  let currentName = null;
-  let btnInjected = false;
+  let debounceTimer = null;
+  let lastHeaderText = null;
+  let pipelinesCache = null;
 
   // ==================== CONFIG ====================
 
@@ -40,111 +40,309 @@
     el.className = `show ${type}`;
     setTimeout(() => {
       el.className = "";
-    }, 3000);
+    }, 4000);
   }
 
   // ==================== EXTRAIR DADOS ====================
 
   function extractContactInfo() {
-    // Tentar pegar nome do header do chat
-    // WhatsApp Web usa diferentes seletores dependendo da versão
-    const headerSelectors = [
-      'header span[dir="auto"][title]',
-      "#main header span[title]",
-      'div[data-testid="conversation-header"] span[title]',
-      'div[data-testid="conversation-info-header"] span[title]',
-    ];
-
     let name = null;
-    for (const sel of headerSelectors) {
-      const el = document.querySelector(sel);
-      if (el) {
-        name = el.getAttribute("title") || el.textContent;
-        if (name && name.trim()) {
-          name = name.trim();
+    let phone = null;
+
+    // 1. Pegar nome/número do header do chat
+    const header = document.querySelector("#main header");
+    if (header) {
+      // Tentar múltiplos seletores para o nome do contato
+      const nameSelectors = [
+        'span[title][dir="auto"]',
+        "span[title]",
+      ];
+      for (const sel of nameSelectors) {
+        const spans = header.querySelectorAll(sel);
+        for (const span of spans) {
+          const title = (span.getAttribute("title") || "").trim();
+          if (!title) continue;
+          if (title.toLowerCase().includes("clique")) continue;
+          if (title.toLowerCase().includes("click")) continue;
+          if (title.toLowerCase().includes("etiquetar")) continue;
+          if (title.toLowerCase().includes("pesquisar")) continue;
+          if (title.toLowerCase().includes("silenciar")) continue;
+          if (title.toLowerCase().includes("adicionar")) continue;
+          if (title.length > 100) continue;
+
+          name = title;
           break;
+        }
+        if (name) break;
+      }
+    }
+
+    // Fallback: tentar pegar o textContent do primeiro elemento clicável do header
+    if (!name && header) {
+      const clickable = header.querySelector('[role="button"] span, [data-testid] span');
+      if (clickable) {
+        const txt = (clickable.textContent || "").trim();
+        if (txt && txt.length < 50 && !txt.toLowerCase().includes("clique")) {
+          name = txt;
         }
       }
     }
 
-    // Tentar extrair telefone
-    // O telefone pode estar no título se for um número não salvo
-    // Ou podemos pegar do painel de info do contato
-    let phone = null;
-
-    // Se o nome parece ser um número de telefone
-    if (name && /^[\d\s\+\-\(\)]+$/.test(name.replace(/\s/g, ""))) {
-      phone = name.replace(/\D/g, "");
+    // 2. Extrair telefone do nome se for um número (+55 XX XXXXX-XXXX)
+    if (name) {
+      const nameDigits = name.replace(/\D/g, "");
+      if (nameDigits.length >= 10 && nameDigits.length <= 15) {
+        phone = nameDigits;
+      }
     }
 
-    // Tentar pegar da seção de detalhes do contato
+    // 3. Se não achou telefone, procurar no painel de info do contato (drawer lateral)
     if (!phone) {
-      const phoneSelectors = [
-        'span[title*="+55"]',
-        'span.selectable-text[title*="+"]',
-        'div[data-testid="chat-subtitle"] span',
+      // O painel de contato tem o número em um span visível
+      const drawerSelectors = [
+        'div[data-testid="contact-info-drawer"] span[title]',
+        'section span[title*="+55"]',
+        'section span[title*="+"]',
       ];
-      for (const sel of phoneSelectors) {
-        const el = document.querySelector(sel);
-        if (el) {
-          const txt = el.getAttribute("title") || el.textContent || "";
+      for (const sel of drawerSelectors) {
+        const els = document.querySelectorAll(sel);
+        for (const el of els) {
+          const txt = (el.getAttribute("title") || el.textContent || "").trim();
           const digits = txt.replace(/\D/g, "");
-          if (digits.length >= 10) {
+          if (digits.length >= 10 && digits.length <= 15) {
             phone = digits;
+            if (!name || name === txt) name = txt;
             break;
           }
         }
+        if (phone) break;
       }
     }
 
+    // 4. Último recurso: procurar qualquer texto com formato de telefone BR no #main header
+    if (!phone && header) {
+      const allText = header.textContent || "";
+      const phoneMatch = allText.match(/\+?55\s*\d{2}\s*\d{4,5}[\s\-]?\d{4}/);
+      if (phoneMatch) {
+        phone = phoneMatch[0].replace(/\D/g, "");
+      }
+    }
+
+    console.log("[CRM Extension] Extraído:", { name, phone });
     return { name, phone };
   }
 
   // ==================== API ====================
 
-  async function saveToAPI(name, phone) {
+  async function apiCall(endpoint, method, body) {
     const config = await getConfig();
-
     if (!config.crmUrl || !config.apiKey || !config.empresaSlug) {
-      showFeedback(
-        "Configure a extensão primeiro (clique no ícone)",
-        "error"
-      );
+      showFeedback("Configure a extensão primeiro (clique no ícone)", "error");
       return null;
     }
 
-    const url = `${config.crmUrl.replace(/\/$/, "")}/api/v1/leads/chrome-extension/${config.empresaSlug}/`;
-
-    const response = await fetch(url, {
-      method: "POST",
+    const url = `${config.crmUrl.replace(/\/$/, "")}/api/v1/leads/chrome-extension/${config.empresaSlug}/${endpoint}`;
+    const options = {
+      method,
       headers: {
         "Content-Type": "application/json",
         "X-API-Key": config.apiKey,
       },
-      body: JSON.stringify({
-        telefone: phone,
-        nome: name,
-        tags: ["whatsapp-web", "chrome-extension"],
-      }),
-    });
+    };
+    if (body) options.body = JSON.stringify(body);
 
+    const response = await fetch(url, options);
     return await response.json();
   }
 
-  async function checkContact(phone) {
-    const config = await getConfig();
-    if (!config.crmUrl || !config.apiKey || !config.empresaSlug) return null;
+  async function loadPipelines() {
+    if (pipelinesCache) return pipelinesCache;
+    try {
+      const result = await apiCall("pipelines/", "GET");
+      if (result && result.pipelines) {
+        pipelinesCache = result.pipelines;
+        return pipelinesCache;
+      }
+    } catch (e) {
+      console.error("[CRM Extension] Erro ao carregar pipelines:", e);
+    }
+    return [];
+  }
 
-    const url = `${config.crmUrl.replace(/\/$/, "")}/api/v1/leads/chrome-extension/${config.empresaSlug}/check/?telefone=${phone}`;
+  // ==================== FORMULÁRIO ====================
+
+  function createFormModal() {
+    // Remover se existir
+    const old = document.getElementById("crm-modal");
+    if (old) old.remove();
+
+    const overlay = document.createElement("div");
+    overlay.id = "crm-modal";
+    overlay.innerHTML = `
+      <div class="crm-modal-backdrop"></div>
+      <div class="crm-modal-content">
+        <div class="crm-modal-header">Salvar no CRM</div>
+        <div class="crm-modal-body">
+          <div class="crm-field">
+            <label>Nome</label>
+            <input type="text" id="crm-nome" placeholder="Nome do contato">
+          </div>
+          <div class="crm-field">
+            <label>Telefone</label>
+            <input type="text" id="crm-telefone" placeholder="DDD + Número">
+          </div>
+          <div class="crm-field">
+            <label>Pipeline</label>
+            <select id="crm-pipeline">
+              <option value="">Sem pipeline (salvar como Lead)</option>
+            </select>
+          </div>
+          <div class="crm-field" id="crm-etapa-field" style="display:none">
+            <label>Etapa</label>
+            <select id="crm-etapa"></select>
+          </div>
+          <div class="crm-field">
+            <label>Notas</label>
+            <textarea id="crm-notas" rows="2" placeholder="Observações (opcional)"></textarea>
+          </div>
+        </div>
+        <div class="crm-modal-footer">
+          <button class="crm-btn-cancel" id="crm-cancel">Cancelar</button>
+          <button class="crm-btn-save" id="crm-save">Salvar</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    // Eventos
+    overlay.querySelector(".crm-modal-backdrop").addEventListener("click", closeModal);
+    document.getElementById("crm-cancel").addEventListener("click", closeModal);
+    document.getElementById("crm-save").addEventListener("click", handleFormSave);
+    document.getElementById("crm-pipeline").addEventListener("change", onPipelineChange);
+
+    return overlay;
+  }
+
+  function closeModal() {
+    const modal = document.getElementById("crm-modal");
+    if (modal) modal.remove();
+  }
+
+  function onPipelineChange() {
+    const pipelineId = document.getElementById("crm-pipeline").value;
+    const etapaField = document.getElementById("crm-etapa-field");
+    const etapaSelect = document.getElementById("crm-etapa");
+
+    if (!pipelineId || !pipelinesCache) {
+      etapaField.style.display = "none";
+      return;
+    }
+
+    const pipeline = pipelinesCache.find((p) => String(p.id) === pipelineId);
+    if (!pipeline || !pipeline.etapas.length) {
+      etapaField.style.display = "none";
+      return;
+    }
+
+    etapaSelect.innerHTML = "";
+    pipeline.etapas.forEach((e) => {
+      const opt = document.createElement("option");
+      opt.value = e.id;
+      opt.textContent = e.nome;
+      etapaSelect.appendChild(opt);
+    });
+
+    etapaField.style.display = "block";
+  }
+
+  async function openForm() {
+    const { name, phone } = extractContactInfo();
+    const pipelines = await loadPipelines();
+
+    createFormModal();
+
+    // Preencher dados
+    document.getElementById("crm-nome").value = name || "";
+    document.getElementById("crm-telefone").value = phone || "";
+
+    // Preencher pipelines
+    const select = document.getElementById("crm-pipeline");
+    pipelines.forEach((p) => {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = p.nome;
+      select.appendChild(opt);
+    });
+
+    // Se só tem 1 pipeline, selecionar automaticamente
+    if (pipelines.length === 1) {
+      select.value = pipelines[0].id;
+      onPipelineChange();
+    }
+  }
+
+  async function handleFormSave() {
+    const nome = document.getElementById("crm-nome").value.trim();
+    const telefone = document.getElementById("crm-telefone").value.trim();
+    const pipelineId = document.getElementById("crm-pipeline").value;
+    const etapaId = document.getElementById("crm-etapa").value;
+    const notas = document.getElementById("crm-notas").value.trim();
+
+    if (!telefone) {
+      showFeedback("Telefone é obrigatório", "error");
+      return;
+    }
+
+    const saveBtn = document.getElementById("crm-save");
+    saveBtn.textContent = "Salvando...";
+    saveBtn.disabled = true;
 
     try {
-      const response = await fetch(url, {
-        headers: { "X-API-Key": config.apiKey },
-      });
-      return await response.json();
-    } catch {
-      return null;
+      const body = {
+        telefone: telefone.replace(/\D/g, ""),
+        nome: nome || "Contato WhatsApp",
+        notas,
+        tags: ["whatsapp-web", "chrome-extension"],
+      };
+      if (pipelineId) body.pipeline_id = parseInt(pipelineId);
+      if (etapaId) body.etapa_id = parseInt(etapaId);
+
+      const result = await apiCall("", "POST", body);
+      if (!result) return;
+
+      if (result.status === "created") {
+        const extra = result.pipeline ? ` → ${result.pipeline} / ${result.etapa}` : "";
+        showFeedback(`${nome || "Contato"} salvo no CRM${extra}`, "success");
+        closeModal();
+        updateButtonState(result);
+      } else if (result.status === "existing") {
+        showFeedback(result.message, "info");
+        closeModal();
+      } else {
+        throw new Error(result.error || "Erro desconhecido");
+      }
+    } catch (err) {
+      showFeedback(`Erro: ${err.message}`, "error");
+      saveBtn.textContent = "Salvar";
+      saveBtn.disabled = false;
     }
+  }
+
+  function updateButtonState(result) {
+    const btn = document.getElementById("crm-save-btn");
+    if (!btn) return;
+    btn.classList.add("crm-saved");
+    if (result.pipeline) {
+      btn.innerHTML = `&#9989; ${result.pipeline}`;
+    } else {
+      btn.innerHTML = "&#9989; Salvo!";
+    }
+    setTimeout(() => {
+      btn.className = "";
+      btn.id = "crm-save-btn";
+      btn.innerHTML = "&#128190; Salvar no CRM";
+    }, 5000);
   }
 
   // ==================== BOTÃO ====================
@@ -153,101 +351,30 @@
     const btn = document.createElement("button");
     btn.id = "crm-save-btn";
     btn.innerHTML = "&#128190; Salvar no CRM";
-    btn.addEventListener("click", handleSave);
+    btn.addEventListener("click", openForm);
     return btn;
-  }
-
-  async function handleSave() {
-    const btn = document.getElementById("crm-save-btn");
-    if (!btn) return;
-
-    const { name, phone } = extractContactInfo();
-
-    if (!phone) {
-      // Pedir telefone manualmente
-      const input = prompt(
-        "Não consegui extrair o telefone automaticamente.\nDigite o número (com DDD):",
-        ""
-      );
-      if (!input) return;
-      currentPhone = input.replace(/\D/g, "");
-    } else {
-      currentPhone = phone;
-    }
-
-    currentName = name || "Contato WhatsApp";
-
-    // Feedback visual
-    btn.classList.add("crm-saving");
-    btn.innerHTML = "&#8987; Salvando...";
-
-    try {
-      const result = await saveToAPI(currentName, currentPhone);
-      if (!result) return;
-
-      if (result.status === "created") {
-        btn.classList.remove("crm-saving");
-        btn.classList.add("crm-saved");
-        btn.innerHTML = "&#9989; Salvo!";
-        const extra = result.is_customer ? " (já é cliente!)" : "";
-        showFeedback(`${currentName} salvo no CRM${extra}`, "success");
-      } else if (result.status === "existing") {
-        btn.classList.remove("crm-saving");
-        btn.classList.add("crm-exists");
-        btn.innerHTML = "&#128204; Já existe";
-        showFeedback(
-          `${result.message} - Status: ${result.lead_status}`,
-          "info"
-        );
-      } else {
-        throw new Error(result.error || "Erro desconhecido");
-      }
-    } catch (err) {
-      btn.classList.remove("crm-saving");
-      btn.classList.add("crm-error");
-      btn.innerHTML = "&#10060; Erro";
-      showFeedback(`Erro: ${err.message}`, "error");
-    }
-
-    // Resetar botão após 3 segundos
-    setTimeout(() => {
-      if (btn) {
-        btn.className = "";
-        btn.id = "crm-save-btn";
-        btn.innerHTML = "&#128190; Salvar no CRM";
-      }
-    }, 3000);
   }
 
   // ==================== INJEÇÃO ====================
 
   function injectButton() {
-    // Remover botão anterior se existir
+    const header = document.querySelector("#main header");
+    if (!header) return;
+
+    const titleEl = header.querySelector("span[title]");
+    const currentTitle = titleEl ? titleEl.getAttribute("title") : null;
+
+    if (document.getElementById("crm-save-btn") && currentTitle === lastHeaderText) {
+      return;
+    }
+
+    lastHeaderText = currentTitle;
+
     const existing = document.getElementById("crm-save-btn");
     if (existing) existing.remove();
 
-    // Encontrar o header do chat
-    const headerSelectors = [
-      "#main header",
-      'div[data-testid="conversation-header"]',
-      'header[data-testid="chatlist-header"]',
-    ];
-
-    let header = null;
-    for (const sel of headerSelectors) {
-      header = document.querySelector(sel);
-      if (header) break;
-    }
-
-    if (!header) return;
-
-    // Verificar se já tem o botão neste header
-    if (header.querySelector("#crm-save-btn")) return;
-
     const btn = createButton();
 
-    // Inserir o botão no header
-    // Tentar colocar ao lado dos ícones de ação
     const actionsContainer = header.querySelector(
       'div[role="toolbar"], span[data-testid="menu"]'
     );
@@ -257,16 +384,20 @@
       header.appendChild(btn);
     }
 
-    // Verificar se contato já existe no CRM
+    // Verificar se contato já existe
     const { phone } = extractContactInfo();
     if (phone) {
-      checkContact(phone).then((result) => {
+      apiCall(`check/?telefone=${phone}`, "GET").then((result) => {
         if (result && result.exists) {
           btn.classList.add("crm-exists");
-          const label = result.is_customer
-            ? `Cliente: ${result.customer_nome}`
-            : `Lead: ${result.lead_nome}`;
-          btn.innerHTML = `&#128204; ${label}`;
+          if (result.pipelines && result.pipelines.length > 0) {
+            const p = result.pipelines[0];
+            btn.innerHTML = `&#128204; ${p.pipeline}: ${p.etapa || "sem etapa"}`;
+          } else if (result.is_customer) {
+            btn.innerHTML = `&#128204; Cliente: ${result.customer_nome}`;
+          } else if (result.is_lead) {
+            btn.innerHTML = `&#128204; Lead: ${result.lead_nome}`;
+          }
         }
       });
     }
@@ -274,34 +405,37 @@
 
   // ==================== OBSERVER ====================
 
-  // Observar mudanças no DOM para detectar troca de chat
-  function startObserver() {
-    const observer = new MutationObserver(() => {
-      // Verificar se tem um chat aberto
-      const main = document.querySelector("#main");
-      if (main) {
+  function onDomChange() {
+    if (debounceTimer) return;
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      if (document.querySelector("#main")) {
         injectButton();
       }
-    });
+    }, 500);
+  }
 
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-    });
+  function startObserver() {
+    const app = document.querySelector("#app");
+    if (app) {
+      new MutationObserver(onDomChange).observe(app, {
+        childList: true,
+        subtree: true,
+      });
+    }
   }
 
   // ==================== INIT ====================
 
-  // Esperar WhatsApp Web carregar
   function waitForWhatsApp() {
     const check = setInterval(() => {
-      const app = document.querySelector("#app");
-      if (app) {
+      if (document.querySelector("#app")) {
         clearInterval(check);
         console.log("[CRM Extension] WhatsApp Web detectado, iniciando...");
         startObserver();
-        // Tentar injetar imediatamente se já tem chat aberto
         setTimeout(injectButton, 2000);
+        // Pre-carregar pipelines
+        loadPipelines();
       }
     }, 1000);
   }

@@ -8,7 +8,7 @@ from django.views.decorators.csrf import csrf_exempt
 from import_export import resources
 from import_export.admin import ExportMixin
 from django.db.models import Count
-from .models import Customer, Cart, Order, CustomerAnalysis, Lead, MensagemWhatsApp
+from .models import Customer, Cart, Order, CustomerAnalysis, Lead, MensagemWhatsApp, LeadAtacado, Pipeline, PipelineEtapa, ContatoPipeline
 from tenants.admin import TenantAdminMixin
 import json
 from datetime import datetime
@@ -22,20 +22,59 @@ class CustomerResource(resources.ModelResource):
                  'status', 'score', 'total_spent', 'completed_orders', 'abandoned_carts')
 
 
+class OrderInline(admin.TabularInline):
+    """Pedidos do cliente exibidos inline."""
+    model = Order
+    extra = 0
+    fields = ['order_number', 'total', 'status', 'payment_method', 'created_at', 'completed_at']
+    readonly_fields = ['order_number', 'total', 'status', 'payment_method', 'created_at', 'completed_at']
+    ordering = ['-created_at']
+    show_change_link = True
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+class CartInline(admin.TabularInline):
+    """Carrinhos do cliente exibidos inline."""
+    model = Cart
+    extra = 0
+    fields = ['checkout_id', 'cart_total', 'status', 'was_recovered', 'created_at', 'recovered_at']
+    readonly_fields = ['checkout_id', 'cart_total', 'status', 'was_recovered', 'created_at', 'recovered_at']
+    ordering = ['-created_at']
+    show_change_link = True
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
 @admin.register(Customer)
 class CustomerAdmin(TenantAdminMixin, ExportMixin, admin.ModelAdmin):
     resource_class = CustomerResource
-    
-    list_display = ['email', 'full_name', 'phone_display', 'status_badge', 
-                   'score_display', 'total_spent_display', 'last_activity']
-    
-    list_filter = ['status', 'created_at', 'last_activity']
-    
+
+    list_display = ['email', 'full_name', 'phone_display', 'status_badge',
+                   'score_display', 'total_spent_display', 'orders_display',
+                   'days_display', 'last_purchase', 'last_activity']
+
+    list_filter = ['status', 'created_at', 'last_purchase', 'last_activity']
+    ordering = ['-last_purchase', '-score']
+
     search_fields = ['email', 'first_name', 'last_name', 'phone']
-    
-    readonly_fields = ['score', 'status', 'created_at', 'updated_at', 
-                      'last_analyzed', 'whatsapp_number']
-    
+
+    readonly_fields = ['score', 'status', 'created_at', 'updated_at',
+                      'last_analyzed', 'whatsapp_number', 'days_since_last_purchase',
+                      'first_purchase', 'last_purchase', 'total_orders',
+                      'completed_orders', 'total_spent', 'average_order_value',
+                      'abandoned_carts', 'recovered_carts', 'total_abandoned_value']
+
+    inlines = [OrderInline, CartInline]
+
     fieldsets = (
         ('Identificação', {
             'fields': ('email', 'first_name', 'last_name', 'phone', 'whatsapp_number')
@@ -47,12 +86,16 @@ class CustomerAdmin(TenantAdminMixin, ExportMixin, admin.ModelAdmin):
         ('Status e Análise', {
             'fields': ('status', 'score', 'tags', 'notes')
         }),
-        ('Estatísticas', {
-            'fields': ('total_orders', 'completed_orders', 'total_spent', 
-                      'average_order_value', 'abandoned_carts', 'total_abandoned_value')
+        ('Estatísticas de Compra', {
+            'fields': ('total_orders', 'completed_orders', 'total_spent',
+                      'average_order_value', 'days_since_last_purchase')
+        }),
+        ('Estatísticas de Carrinho', {
+            'fields': ('abandoned_carts', 'recovered_carts', 'total_abandoned_value'),
+            'classes': ('collapse',),
         }),
         ('Datas', {
-            'fields': ('first_seen', 'last_purchase', 'last_activity', 
+            'fields': ('first_seen', 'first_purchase', 'last_purchase', 'last_activity',
                       'created_at', 'updated_at', 'last_analyzed')
         }),
     )
@@ -94,7 +137,44 @@ class CustomerAdmin(TenantAdminMixin, ExportMixin, admin.ModelAdmin):
     def total_spent_display(self, obj):
         return f'R$ {obj.total_spent:,.2f}'
     total_spent_display.short_description = 'Total Gasto'
-    
+
+    def orders_display(self, obj):
+        if obj.completed_orders > 0:
+            return format_html(
+                '<span title="{} total / {} completos">{}/{}</span>',
+                obj.total_orders, obj.completed_orders,
+                obj.completed_orders, obj.total_orders,
+            )
+        return obj.total_orders
+    orders_display.short_description = 'Pedidos'
+    orders_display.admin_order_field = 'completed_orders'
+
+    def days_display(self, obj):
+        if obj.days_since_last_purchase is None:
+            return '-'
+        days = obj.days_since_last_purchase
+        if days == 0:
+            color = '#4CAF50'
+            text = 'Hoje'
+        elif days <= 7:
+            color = '#4CAF50'
+            text = f'{days}d'
+        elif days <= 30:
+            color = '#2196F3'
+            text = f'{days}d'
+        elif days <= 90:
+            color = '#FF9800'
+            text = f'{days}d'
+        else:
+            color = '#f44336'
+            text = f'{days}d'
+        return format_html(
+            '<span style="color: {}; font-weight: bold;">{}</span>',
+            color, text,
+        )
+    days_display.short_description = 'Dias s/ compra'
+    days_display.admin_order_field = 'days_since_last_purchase'
+
     def get_queryset(self, request):
         return super().get_queryset(request).prefetch_related('carts', 'orders')
     
@@ -440,6 +520,54 @@ class CartAdmin(TenantAdminMixin, admin.ModelAdmin):
         }
 
 # Adicionar no customers/admin.py
+
+@admin.register(Order)
+class OrderAdmin(TenantAdminMixin, admin.ModelAdmin):
+    list_display = ['order_number', 'get_customer_name', 'get_customer_phone',
+                    'total_display', 'status_badge', 'payment_method', 'created_at']
+    list_filter = ['status', 'payment_method', 'created_at']
+    search_fields = ['order_number', 'order_id', 'customer__email',
+                     'customer__first_name', 'customer__phone']
+    readonly_fields = ['order_id', 'order_number', 'customer', 'total', 'status',
+                       'created_at', 'completed_at', 'items_count', 'payment_method',
+                       'related_cart']
+    date_hierarchy = 'created_at'
+
+    def get_customer_name(self, obj):
+        return obj.customer.full_name
+    get_customer_name.short_description = 'Cliente'
+
+    def get_customer_phone(self, obj):
+        return obj.customer.phone or '-'
+    get_customer_phone.short_description = 'Telefone'
+
+    def total_display(self, obj):
+        return f'R$ {obj.total:,.2f}'
+    total_display.short_description = 'Total'
+
+    def status_badge(self, obj):
+        colors = {
+            'completed': '#4CAF50', 'wc-completed': '#4CAF50',
+            'processing': '#2196F3', 'wc-processing': '#2196F3',
+            'on-hold': '#FF9800', 'wc-on-hold': '#FF9800',
+            'cancelled': '#f44336', 'wc-cancelled': '#f44336',
+            'refunded': '#9C27B0', 'wc-refunded': '#9C27B0',
+            'pending': '#999', 'wc-pending': '#999',
+        }
+        color = colors.get(obj.status, '#666')
+        return format_html(
+            '<span style="background:{}; color:white; padding:2px 8px; '
+            'border-radius:3px; font-size:11px;">{}</span>',
+            color, obj.status,
+        )
+    status_badge.short_description = 'Status'
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser
+
 
 @admin.register(Lead)
 class LeadAdmin(TenantAdminMixin, admin.ModelAdmin):
@@ -958,3 +1086,334 @@ class MensagemWhatsAppAdmin(TenantAdminMixin, admin.ModelAdmin):
             colors.get(obj.status, '#999'), obj.get_status_display(),
         )
     status_badge.short_description = 'Status'
+
+
+@admin.register(LeadAtacado)
+class LeadAtacadoAdmin(TenantAdminMixin, admin.ModelAdmin):
+    list_display = [
+        'nome_completo', 'whatsapp', 'cidade_estado', 'status_empresa_badge',
+        'nome_empresa', 'nicho_empresarial', 'plano_interesse',
+        'prioridade_badge', 'status_dropdown', 'responsavel',
+        'proximo_contato_display', 'whatsapp_action', 'created_at'
+    ]
+    list_filter = [
+        'status', 'prioridade', 'status_empresa', 'plano_interesse',
+        'private_label', 'estado', 'responsavel', 'origem',
+        'whatsapp_enviado', 'created_at'
+    ]
+    search_fields = ['nome_completo', 'email', 'whatsapp', 'cpf', 'nome_empresa', 'cnpj', 'nicho_empresarial']
+    list_editable = ['responsavel']
+    list_per_page = 50
+    date_hierarchy = 'created_at'
+    readonly_fields = ['whatsapp_enviado', 'whatsapp_enviado_em', 'whatsapp_tentativas',
+                       'whatsapp_status', 'whatsapp_erro', 'ip_cliente', 'created_at', 'updated_at']
+    actions = ['enviar_whatsapp_wapi', 'enviar_whatsapp_meta', 'marcar_conversando',
+               'marcar_potencial', 'marcar_passado_vendedor', 'export_csv']
+
+    fieldsets = (
+        ('Dados Pessoais', {
+            'fields': ('nome_completo', 'cpf', 'email', 'whatsapp', 'cidade', 'estado')
+        }),
+        ('Perfil', {
+            'fields': ('status_empresa', 'plano_interesse', 'private_label')
+        }),
+        ('Dados da Empresa', {
+            'fields': ('nome_empresa', 'cnpj', 'nicho_empresarial', 'instagram', 'site_vendas'),
+        }),
+        ('Canais / Sobre', {
+            'fields': ('canais_vendas', 'sobre_voce'),
+            'classes': ('collapse',),
+        }),
+        ('CRM', {
+            'fields': ('status', 'prioridade', 'responsavel', 'proximo_contato', 'valor_estimado', 'notas'),
+            'description': 'Gestão do lead no pipeline de vendas',
+        }),
+        ('WhatsApp', {
+            'fields': ('whatsapp_enviado', 'whatsapp_enviado_em', 'whatsapp_tentativas',
+                       'whatsapp_status', 'whatsapp_erro'),
+            'classes': ('collapse',),
+        }),
+        ('Metadados', {
+            'fields': ('origem', 'ip_cliente', 'created_at', 'updated_at'),
+            'classes': ('collapse',),
+        }),
+    )
+
+    def cidade_estado(self, obj):
+        if obj.cidade and obj.estado:
+            return f'{obj.cidade}/{obj.estado}'
+        return obj.cidade or obj.estado or '-'
+    cidade_estado.short_description = 'Local'
+
+    def status_empresa_badge(self, obj):
+        if not obj.status_empresa:
+            return '-'
+        colors = {
+            'tenho_empresa_vendo_calcados': '#48bb78',
+            'tenho_empresa_nao_vendo_sapatos': '#ecc94b',
+            'nao_tenho_empresa_vendo_sapatos': '#ed8936',
+            'nao_tenho_empresa_nao_vendo_sapatos': '#e53e3e',
+        }
+        labels = {
+            'tenho_empresa_vendo_calcados': 'Emp+Calçados',
+            'tenho_empresa_nao_vendo_sapatos': 'Emp+Outro',
+            'nao_tenho_empresa_vendo_sapatos': 'S/Emp+Calçados',
+            'nao_tenho_empresa_nao_vendo_sapatos': 'S/Emp+Outro',
+        }
+        color = colors.get(obj.status_empresa, '#999')
+        label = labels.get(obj.status_empresa, '?')
+        tc = '#000' if obj.status_empresa == 'tenho_empresa_nao_vendo_sapatos' else '#fff'
+        return format_html(
+            '<span style="background:{}; color:{}; padding:2px 6px; border-radius:4px; '
+            'font-size:10px; font-weight:bold; white-space:nowrap;">{}</span>',
+            color, tc, label,
+        )
+    status_empresa_badge.short_description = 'Tipo'
+
+    def prioridade_badge(self, obj):
+        colors = {'baixa': '#9E9E9E', 'media': '#2196F3', 'alta': '#FF9800', 'urgente': '#f44336'}
+        return format_html(
+            '<span style="background:{}; color:white; padding:2px 6px; border-radius:3px; '
+            'font-size:10px; font-weight:bold;">{}</span>',
+            colors.get(obj.prioridade, '#999'), obj.get_prioridade_display(),
+        )
+    prioridade_badge.short_description = 'Prior.'
+
+    def proximo_contato_display(self, obj):
+        if not obj.proximo_contato:
+            return '-'
+        now = timezone.now()
+        if obj.proximo_contato < now:
+            return format_html(
+                '<span style="color:#f44336; font-weight:bold;" title="{}">{}</span>',
+                obj.proximo_contato.strftime('%d/%m/%Y %H:%M'),
+                'ATRASADO',
+            )
+        return format_html(
+            '<span title="{}">{}</span>',
+            obj.proximo_contato.strftime('%d/%m/%Y %H:%M'),
+            obj.proximo_contato.strftime('%d/%m %H:%M'),
+        )
+    proximo_contato_display.short_description = 'Follow-up'
+
+    def status_dropdown(self, obj):
+        colors = {
+            'novo': '#2196F3', 'conversando': '#FF9800', 'potencial': '#9C27B0',
+            'nao_potencial': '#795548', 'passado_vendedor': '#00BCD4',
+            'curioso': '#607D8B', 'convertido': '#4CAF50', 'perdido': '#f44336',
+        }
+        options = ''.join(
+            f'<option value="{v}" {"selected" if v == obj.status else ""}>{l}</option>'
+            for v, l in LeadAtacado.LEAD_STATUS
+        )
+        return format_html(
+            '<select class="lead-atacado-status" data-id="{}" '
+            'style="background:{}; color:white; border:none; padding:4px 8px; '
+            'border-radius:4px; cursor:pointer; font-weight:bold; font-size:11px;">'
+            '{}</select>',
+            obj.id, colors.get(obj.status, '#666'), format_html(options),
+        )
+    status_dropdown.short_description = 'Status'
+
+    def whatsapp_action(self, obj):
+        icon = ''
+        if obj.whatsapp_enviado:
+            icon = ' <span style="color:#4CAF50;" title="Enviado">&#10004;</span>'
+        if not obj.whatsapp:
+            return format_html('<span style="color:#999;">sem tel</span>')
+        return format_html(
+            '<a href="#" class="send-wapi-atacado" data-id="{}" '
+            'style="background:#25D366; color:white; padding:3px 8px; border-radius:4px; '
+            'text-decoration:none; font-size:11px; font-weight:bold;">Zap</a>{}',
+            obj.id, format_html(icon),
+        )
+    whatsapp_action.short_description = 'WhatsApp'
+
+    def enviar_whatsapp_wapi(self, request, queryset):
+        from .api_lead_atacado import enviar_whatsapp_lead_atacado
+        enviados = falhas = 0
+        for lead in queryset.exclude(whatsapp=''):
+            r = enviar_whatsapp_lead_atacado(lead, canal='wapi')
+            if r.get('success'):
+                enviados += 1
+            else:
+                falhas += 1
+        self.message_user(request, f'W-API: {enviados} enviados, {falhas} falhas.')
+    enviar_whatsapp_wapi.short_description = 'Enviar WhatsApp (W-API)'
+
+    def enviar_whatsapp_meta(self, request, queryset):
+        from .api_lead_atacado import enviar_whatsapp_lead_atacado
+        enviados = falhas = 0
+        for lead in queryset.exclude(whatsapp=''):
+            r = enviar_whatsapp_lead_atacado(lead, canal='meta')
+            if r.get('success'):
+                enviados += 1
+            else:
+                falhas += 1
+        self.message_user(request, f'Meta API: {enviados} enviados, {falhas} falhas.')
+    enviar_whatsapp_meta.short_description = 'Enviar WhatsApp (Meta Cloud API)'
+
+    def marcar_conversando(self, request, queryset):
+        updated = queryset.update(status='conversando')
+        self.message_user(request, f'{updated} leads marcados como Conversando.')
+    marcar_conversando.short_description = 'Marcar: Conversando'
+
+    def marcar_potencial(self, request, queryset):
+        updated = queryset.update(status='potencial')
+        self.message_user(request, f'{updated} leads marcados como Potencial.')
+    marcar_potencial.short_description = 'Marcar: Potencial'
+
+    def marcar_passado_vendedor(self, request, queryset):
+        updated = queryset.update(status='passado_vendedor')
+        self.message_user(request, f'{updated} leads marcados como Passado p/ Vendedor.')
+    marcar_passado_vendedor.short_description = 'Marcar: Passado p/ Vendedor'
+
+    def export_csv(self, request, queryset):
+        from django.http import HttpResponse
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="leads_atacado.csv"'
+        writer = csv.writer(response)
+        writer.writerow(['Nome', 'WhatsApp', 'Email', 'CPF', 'Cidade', 'Estado',
+                         'Status Empresa', 'Nome Empresa', 'CNPJ', 'Nicho',
+                         'Plano', 'Private Label', 'Status', 'Prioridade',
+                         'Responsável', 'Próximo Contato', 'Data Cadastro'])
+        for lead in queryset:
+            writer.writerow([
+                lead.nome_completo, lead.whatsapp, lead.email, lead.cpf,
+                lead.cidade, lead.estado, lead.get_status_empresa_display(),
+                lead.nome_empresa, lead.cnpj, lead.nicho_empresarial,
+                lead.plano_interesse, lead.private_label, lead.get_status_display(),
+                lead.get_prioridade_display(), lead.responsavel,
+                lead.proximo_contato.strftime('%d/%m/%Y %H:%M') if lead.proximo_contato else '',
+                lead.created_at.strftime('%d/%m/%Y %H:%M'),
+            ])
+        return response
+    export_csv.short_description = 'Exportar CSV'
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path('pipeline/',
+                 self.admin_site.admin_view(self.pipeline_view),
+                 name='lead_atacado_pipeline'),
+            path('enviar-whatsapp/<int:lead_id>/',
+                 self.admin_site.admin_view(self.enviar_whatsapp_individual),
+                 name='lead_atacado_enviar_whatsapp'),
+            path('alterar-status/<int:lead_id>/',
+                 self.admin_site.admin_view(self.alterar_status_ajax),
+                 name='lead_atacado_alterar_status'),
+        ]
+        return custom_urls + urls
+
+    def pipeline_view(self, request):
+        """Vista pipeline/kanban dos leads"""
+        from django.template.response import TemplateResponse
+        from django.db.models import Count, Sum
+
+        # Filtro por empresa (tenant)
+        qs = LeadAtacado.objects.all()
+        if not request.user.is_superuser and hasattr(request.user, 'empresa') and request.user.empresa:
+            qs = qs.filter(empresa=request.user.empresa)
+
+        # Stats por status
+        pipeline = {}
+        for status_key, status_label in LeadAtacado.LEAD_STATUS:
+            leads = qs.filter(status=status_key).order_by('-updated_at')[:50]
+            pipeline[status_key] = {
+                'label': status_label,
+                'leads': leads,
+                'count': qs.filter(status=status_key).count(),
+            }
+
+        # Stats gerais
+        total = qs.count()
+        stats = {
+            'total': total,
+            'novos': qs.filter(status='novo').count(),
+            'conversando': qs.filter(status='conversando').count(),
+            'potencial': qs.filter(status='potencial').count(),
+            'convertidos': qs.filter(status='convertido').count(),
+            'follow_up_atrasado': qs.filter(
+                proximo_contato__lt=timezone.now(),
+                status__in=['novo', 'conversando', 'potencial']
+            ).count(),
+        }
+
+        context = {
+            **self.admin_site.each_context(request),
+            'title': 'Pipeline - Leads Atacado',
+            'pipeline': pipeline,
+            'stats': stats,
+            'status_colors': {
+                'novo': '#2196F3', 'conversando': '#FF9800', 'potencial': '#9C27B0',
+                'nao_potencial': '#795548', 'passado_vendedor': '#00BCD4',
+                'curioso': '#607D8B', 'convertido': '#4CAF50', 'perdido': '#f44336',
+            },
+        }
+        return TemplateResponse(request, 'admin/customers/leadatacado/pipeline.html', context)
+
+    @csrf_exempt
+    def enviar_whatsapp_individual(self, request, lead_id):
+        from .api_lead_atacado import enviar_whatsapp_lead_atacado
+        lead = get_object_or_404(LeadAtacado, pk=lead_id)
+        mensagem = request.POST.get('mensagem', '') if request.method == 'POST' else ''
+        canal = request.POST.get('canal', 'wapi') if request.method == 'POST' else 'wapi'
+        resultado = enviar_whatsapp_lead_atacado(
+            lead,
+            mensagem_texto=mensagem if mensagem else None,
+            canal=canal
+        )
+        return JsonResponse(resultado)
+
+    @csrf_exempt
+    def alterar_status_ajax(self, request, lead_id):
+        if request.method == 'POST':
+            try:
+                data = json.loads(request.body)
+                lead = get_object_or_404(LeadAtacado, pk=lead_id)
+                lead.status = data.get('status', lead.status)
+                lead.save(update_fields=['status', 'updated_at'])
+                return JsonResponse({'success': True})
+            except Exception as e:
+                return JsonResponse({'success': False, 'error': str(e)})
+        return JsonResponse({'success': False, 'error': 'POST required'})
+
+    def changelist_view(self, request, extra_context=None):
+        extra_context = extra_context or {}
+        # Stats rápidos no topo da lista
+        qs = self.get_queryset(request)
+        extra_context['pipeline_stats'] = {
+            'total': qs.count(),
+            'novos': qs.filter(status='novo').count(),
+            'conversando': qs.filter(status='conversando').count(),
+            'potencial': qs.filter(status='potencial').count(),
+            'convertidos': qs.filter(status='convertido').count(),
+        }
+        return super().changelist_view(request, extra_context=extra_context)
+
+    class Media:
+        js = ('js/lead_atacado_admin.js',)
+
+
+class PipelineEtapaInline(admin.TabularInline):
+    model = PipelineEtapa
+    extra = 3
+    fields = ['nome', 'cor', 'ordem', 'is_final']
+    ordering = ['ordem']
+
+
+@admin.register(Pipeline)
+class PipelineAdmin(TenantAdminMixin, admin.ModelAdmin):
+    list_display = ['nome', 'empresa', 'ativo', 'ordem']
+    list_filter = ['empresa', 'ativo']
+    prepopulated_fields = {'slug': ('nome',)}
+    inlines = [PipelineEtapaInline]
+
+
+@admin.register(ContatoPipeline)
+class ContatoPipelineAdmin(TenantAdminMixin, admin.ModelAdmin):
+    list_display = ['nome', 'telefone', 'pipeline', 'etapa', 'prioridade', 'responsavel', 'created_at']
+    list_filter = ['empresa', 'pipeline', 'etapa', 'prioridade']
+    search_fields = ['nome', 'telefone', 'email', 'empresa_contato']
+    list_editable = ['etapa', 'prioridade', 'responsavel']
+    raw_id_fields = ['customer']

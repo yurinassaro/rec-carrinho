@@ -1,14 +1,131 @@
 """
-Tasks Celery para envio diario de mensagens WhatsApp via Meta API.
-- Leads do dia anterior (segmentados: cliente vs nao-cliente)
-- Carrinhos abandonados do dia anterior
+Tasks Celery para:
+- Sync diario de clientes e pedidos via WooCommerce REST API
+- Envio diario de mensagens WhatsApp via Meta API
 """
 import logging
+import os
 from celery import shared_task
 from datetime import timedelta
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
+
+
+@shared_task(name='customers.import_ssh_diario')
+def import_ssh_diario():
+    """
+    Import diario via SSH: carrinhos (CartFlows) e leads (Form Vibes).
+    Puxa dados dos ultimos 2 dias para garantir que nada escape.
+    Roda via Celery Beat (ex: todo dia as 8h30, antes do sync WooCommerce API).
+    """
+    from django.core.management import call_command
+    from tenants.models import Empresa
+    from io import StringIO
+    from datetime import datetime, timedelta
+
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=2)
+
+    start_str = start_date.strftime('%Y-%m-%d')
+    end_str = end_date.strftime('%Y-%m-%d')
+
+    empresas = Empresa.objects.filter(ativo=True)
+    resultado = {'carrinhos': {}, 'leads': {}}
+
+    for empresa in empresas:
+        # Verificar se tem config SSH/WooCommerce
+        has_ssh = (
+            getattr(empresa, 'has_woocommerce_config', False)
+            or bool(os.getenv('SSH_HOST'))
+        )
+        if not has_ssh:
+            logger.info(f"[{empresa.slug}] SSH nao configurado, pulando import")
+            continue
+
+        # Import carrinhos e pedidos via SSH
+        try:
+            out = StringIO()
+            call_command(
+                'import_customers',
+                empresa=empresa.slug,
+                start_date=start_str,
+                end_date=end_str,
+                import_type='all',
+                stdout=out,
+                verbosity=1,
+            )
+            resultado['carrinhos'][empresa.slug] = 'ok'
+            logger.info(f"[{empresa.slug}] Import carrinhos SSH concluido")
+        except Exception as e:
+            resultado['carrinhos'][empresa.slug] = str(e)
+            logger.error(f"[{empresa.slug}] Erro import carrinhos SSH: {e}")
+
+        # Import leads via SSH
+        try:
+            out = StringIO()
+            call_command(
+                'import_leads',
+                empresa=empresa.slug,
+                start_date=start_str,
+                end_date=end_str,
+                stdout=out,
+                verbosity=1,
+            )
+            resultado['leads'][empresa.slug] = 'ok'
+            logger.info(f"[{empresa.slug}] Import leads SSH concluido")
+        except Exception as e:
+            resultado['leads'][empresa.slug] = str(e)
+            logger.error(f"[{empresa.slug}] Erro import leads SSH: {e}")
+
+    logger.info(f"Import SSH diario finalizado: {resultado}")
+    return resultado
+
+
+@shared_task(name='customers.sync_woocommerce_diario')
+def sync_woocommerce_diario():
+    """
+    Sync diario: puxa clientes e pedidos do WooCommerce REST API.
+    Roda via Celery Beat (ex: todo dia as 09h, antes das promocoes).
+    """
+    from tenants.models import Empresa
+    from customers.services.woocommerce import sync_customers, sync_orders
+
+    empresas = Empresa.objects.filter(ativo=True)
+    resultado_total = {
+        'customers': {'total': 0, 'criados': 0, 'atualizados': 0},
+        'orders': {'total': 0, 'criados': 0, 'atualizados': 0},
+    }
+
+    for empresa in empresas:
+        if not empresa.has_woocommerce_api:
+            logger.info(f"[{empresa.slug}] WooCommerce API nao configurado, pulando sync")
+            continue
+
+        try:
+            # Sync clientes (todos)
+            stats_customers = sync_customers(empresa)
+            for k in ['total', 'criados', 'atualizados']:
+                resultado_total['customers'][k] += stats_customers[k]
+
+            # Sync pedidos (ultimos 7 dias)
+            stats_orders = sync_orders(empresa, days_back=7)
+            for k in ['total', 'criados', 'atualizados']:
+                resultado_total['orders'][k] += stats_orders[k]
+
+            logger.info(
+                f"[{empresa.slug}] Sync WooCommerce: "
+                f"{stats_customers['total']} clientes, {stats_orders['total']} pedidos"
+            )
+        except Exception as e:
+            logger.error(f"[{empresa.slug}] Erro sync WooCommerce: {e}")
+
+    logger.info(
+        f"Sync WooCommerce finalizado: "
+        f"{resultado_total['customers']['total']} clientes, "
+        f"{resultado_total['orders']['total']} pedidos"
+    )
+    return resultado_total
 
 
 @shared_task(name='customers.enviar_promocoes_diarias')

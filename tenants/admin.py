@@ -1,6 +1,8 @@
 from django.contrib import admin, messages
 from django.contrib.auth.models import User
 from django.utils.html import format_html
+from django.urls import path, reverse
+from django.http import HttpResponseRedirect
 from .models import Empresa, EmpresaUsuario, InstanciaWAPI
 
 
@@ -100,7 +102,7 @@ class EmpresaAdmin(admin.ModelAdmin):
     list_display = ['nome', 'slug', 'dominio', 'plano', 'ativo', 'has_woo_config', 'created_at']
     list_filter = ['ativo', 'plano']
     search_fields = ['nome', 'slug', 'dominio']
-    readonly_fields = ['created_at', 'updated_at']
+    readonly_fields = ['created_at', 'updated_at', 'painel_acoes']
     inlines = [InstanciaWAPIInline, EmpresaUsuarioInline]
 
     def get_prepopulated_fields(self, request, obj=None):
@@ -126,10 +128,18 @@ class EmpresaAdmin(admin.ModelAdmin):
         ('Identificacao', {
             'fields': ('nome', 'slug', 'dominio', 'ativo', 'plano')
         }),
-        ('WooCommerce - SSH', {
+        ('Acoes', {
+            'fields': ('painel_acoes',),
+            'description': 'Acoes manuais para sincronizar dados e enviar mensagens.'
+        }),
+        ('WooCommerce - REST API', {
+            'fields': ('woo_store_url', 'woo_consumer_key', 'woo_consumer_secret'),
+            'description': 'API REST para sync diario de clientes e pedidos (roda as 9h). Gerar em WooCommerce > Settings > Advanced > REST API.'
+        }),
+        ('WooCommerce - SSH (Carrinhos/Leads)', {
             'fields': ('woo_ssh_host', 'woo_ssh_port', 'woo_ssh_user', 'woo_ssh_key_path'),
             'classes': ('collapse',),
-            'description': 'Configuracoes de conexao SSH para acessar o servidor WooCommerce'
+            'description': 'Conexao SSH para importar carrinhos abandonados e leads (Form Vibes)'
         }),
         ('WooCommerce - Database', {
             'fields': ('woo_db_host', 'woo_db_port', 'woo_db_name',
@@ -204,9 +214,17 @@ class EmpresaAdmin(admin.ModelAdmin):
             'fields': ('nome',),
             'description': 'Informacoes basicas da sua empresa'
         }),
+        ('Acoes', {
+            'fields': ('painel_acoes',),
+            'description': 'Acoes manuais para sincronizar dados e enviar mensagens.'
+        }),
         ('W-API WhatsApp', {
             'fields': ('wapi_ativo', 'wapi_token', 'wapi_instance'),
             'description': 'Configure suas credenciais da W-API (w-api.app) para envio automático de WhatsApp.'
+        }),
+        ('WooCommerce - REST API', {
+            'fields': ('woo_store_url', 'woo_consumer_key', 'woo_consumer_secret'),
+            'description': 'API REST para sync diario de clientes e pedidos. Gerar em WooCommerce > Settings > Advanced > REST API.'
         }),
         ('Webhook WooCommerce', {
             'fields': ('woo_webhook_secret',),
@@ -260,9 +278,194 @@ class EmpresaAdmin(admin.ModelAdmin):
     def get_readonly_fields(self, request, obj=None):
         """Usuarios normais so podem editar mensagens WhatsApp"""
         if request.user.is_superuser:
-            return ['created_at', 'updated_at', 'bling_status_display']
+            return ['created_at', 'updated_at', 'bling_status_display', 'painel_acoes']
         # Usuarios normais: nome eh readonly
-        return ['nome', 'created_at', 'updated_at', 'bling_status_display']
+        return ['nome', 'created_at', 'updated_at', 'bling_status_display', 'painel_acoes']
+
+    def painel_acoes(self, obj):
+        """Botoes de acao dentro da pagina da empresa."""
+        if not obj or not obj.pk:
+            return '-'
+
+        sync_url = reverse('admin:tenants_empresa_sync_woo', args=[obj.pk])
+        promo_url = reverse('admin:tenants_empresa_enviar_promo', args=[obj.pk])
+        ssh_url = reverse('admin:tenants_empresa_import_ssh', args=[obj.pk])
+
+        btns = '<div style="display:flex; flex-wrap:wrap; gap:8px;">'
+
+        # Botao Import SSH (Carrinhos + Leads)
+        has_ssh = getattr(obj, 'has_woocommerce_config', False)
+        if has_ssh:
+            btns += (
+                f'<a href="{ssh_url}" class="button" '
+                f'style="background:#e67e22; color:white; padding:6px 15px;">'
+                f'Import SSH (Carrinhos + Leads)</a>'
+            )
+        else:
+            btns += (
+                '<span style="color:gray;">'
+                'Import SSH: configure SSH/DB primeiro</span>'
+            )
+
+        # Botao Sync WooCommerce
+        if obj.has_woocommerce_api:
+            btns += (
+                f'<a href="{sync_url}" class="button" '
+                f'style="background:#417690; color:white; padding:6px 15px;">'
+                f'Sync WooCommerce (Clientes + Pedidos)</a>'
+            )
+        else:
+            btns += (
+                '<span style="color:gray;">'
+                'Sync WooCommerce: configure Consumer Key/Secret primeiro</span>'
+            )
+
+        # Botao Enviar Promocoes
+        if obj.meta_phone_number_id and obj.meta_access_token:
+            btns += (
+                f'<a href="{promo_url}" class="button" '
+                f'style="background:#28a745; color:white; padding:6px 15px;">'
+                f'Enviar Promocoes Agora</a>'
+            )
+        else:
+            btns += (
+                '<span style="color:gray;">'
+                'Enviar Promocoes: configure Meta WhatsApp primeiro</span>'
+            )
+
+        btns += '</div>'
+        return format_html(btns)
+    painel_acoes.short_description = 'Acoes'
+
+    def get_urls(self):
+        """Adiciona URLs customizadas para acoes da empresa."""
+        custom_urls = [
+            path(
+                '<int:empresa_id>/import-ssh/',
+                self.admin_site.admin_view(self.view_import_ssh),
+                name='tenants_empresa_import_ssh',
+            ),
+            path(
+                '<int:empresa_id>/sync-woo/',
+                self.admin_site.admin_view(self.view_sync_woo),
+                name='tenants_empresa_sync_woo',
+            ),
+            path(
+                '<int:empresa_id>/enviar-promo/',
+                self.admin_site.admin_view(self.view_enviar_promo),
+                name='tenants_empresa_enviar_promo',
+            ),
+        ]
+        return custom_urls + super().get_urls()
+
+    def view_import_ssh(self, request, empresa_id):
+        """View: import carrinhos + leads via SSH."""
+        from django.core.management import call_command
+        from io import StringIO
+        from datetime import datetime, timedelta
+
+        empresa = Empresa.objects.get(pk=empresa_id)
+        redirect_url = reverse('admin:tenants_empresa_change', args=[empresa_id])
+
+        if not getattr(empresa, 'has_woocommerce_config', False):
+            messages.warning(request, f'{empresa.nome}: SSH/Database nao configurado')
+            return HttpResponseRedirect(redirect_url)
+
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=7)
+        start_str = start_date.strftime('%Y-%m-%d')
+        end_str = end_date.strftime('%Y-%m-%d')
+
+        resultados = []
+
+        # Import carrinhos e pedidos
+        try:
+            out = StringIO()
+            call_command(
+                'import_customers',
+                empresa=empresa.slug,
+                start_date=start_str,
+                end_date=end_str,
+                import_type='all',
+                stdout=out,
+                verbosity=1,
+            )
+            resultados.append('Carrinhos/Pedidos: OK')
+        except Exception as e:
+            resultados.append(f'Carrinhos/Pedidos: Erro - {e}')
+
+        # Import leads
+        try:
+            out = StringIO()
+            call_command(
+                'import_leads',
+                empresa=empresa.slug,
+                start_date=start_str,
+                end_date=end_str,
+                stdout=out,
+                verbosity=1,
+            )
+            resultados.append('Leads: OK')
+        except Exception as e:
+            resultados.append(f'Leads: Erro - {e}')
+
+        msg = f'{empresa.nome} (ultimos 7 dias): ' + ' | '.join(resultados)
+        if all('OK' in r for r in resultados):
+            messages.success(request, msg)
+        else:
+            messages.warning(request, msg)
+
+        return HttpResponseRedirect(redirect_url)
+
+    def view_sync_woo(self, request, empresa_id):
+        """View: sync WooCommerce clientes + pedidos."""
+        from customers.services.woocommerce import sync_customers, sync_orders
+
+        empresa = Empresa.objects.get(pk=empresa_id)
+        redirect_url = reverse('admin:tenants_empresa_change', args=[empresa_id])
+
+        if not empresa.has_woocommerce_api:
+            messages.warning(request, f'{empresa.nome}: WooCommerce API nao configurado')
+            return HttpResponseRedirect(redirect_url)
+
+        try:
+            stats_c = sync_customers(empresa)
+            stats_o = sync_orders(empresa, days_back=7)
+            messages.success(
+                request,
+                f'{empresa.nome}: {stats_c["total"]} clientes ({stats_c["criados"]} novos), '
+                f'{stats_o["total"]} pedidos ({stats_o["criados"]} novos)'
+            )
+        except Exception as e:
+            messages.error(request, f'{empresa.nome}: Erro - {e}')
+
+        return HttpResponseRedirect(redirect_url)
+
+    def view_enviar_promo(self, request, empresa_id):
+        """View: enviar promocoes (leads + carrinhos + inativos)."""
+        from customers.tasks import (
+            _processar_leads_dia_anterior,
+            _processar_carts_dia_anterior,
+            _processar_clientes_inativos,
+        )
+
+        empresa = Empresa.objects.get(pk=empresa_id)
+        redirect_url = reverse('admin:tenants_empresa_change', args=[empresa_id])
+
+        if not empresa.meta_phone_number_id or not empresa.meta_access_token:
+            messages.warning(request, f'{empresa.nome}: Meta WhatsApp nao configurado')
+            return HttpResponseRedirect(redirect_url)
+
+        leads = _processar_leads_dia_anterior(empresa)
+        carts = _processar_carts_dia_anterior(empresa)
+        inativos = _processar_clientes_inativos(empresa)
+
+        messages.success(
+            request,
+            f'{empresa.nome}: {leads} leads, {carts} carrinhos, {inativos} inativos enviados'
+        )
+
+        return HttpResponseRedirect(redirect_url)
 
     def get_queryset(self, request):
         """Usuarios normais so veem sua propria empresa"""
@@ -290,7 +493,7 @@ class EmpresaAdmin(admin.ModelAdmin):
                 kwargs['queryset'] = InstanciaWAPI.objects.none()
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
-    actions = ['sync_bling_agora']
+    actions = ['sync_bling_agora', 'sync_woocommerce_agora', 'enviar_promocoes_agora']
 
     def has_woo_config(self, obj):
         return obj.has_woocommerce_config
@@ -349,6 +552,52 @@ class EmpresaAdmin(admin.ModelAdmin):
             else:
                 self.message_user(request, f"{empresa.nome}: Nenhum status configurado no Bling", messages.WARNING)
     sync_bling_agora.short_description = 'Sincronizar Bling (todos status)'
+
+    def sync_woocommerce_agora(self, request, queryset):
+        """Action: sincronizar clientes e pedidos do WooCommerce via API REST."""
+        from customers.services.woocommerce import sync_customers, sync_orders
+
+        for empresa in queryset:
+            if not empresa.has_woocommerce_api:
+                self.message_user(request, f"{empresa.nome}: WooCommerce API nao configurado", messages.WARNING)
+                continue
+
+            try:
+                stats_c = sync_customers(empresa)
+                stats_o = sync_orders(empresa, days_back=7)
+                self.message_user(
+                    request,
+                    f"{empresa.nome}: {stats_c['total']} clientes ({stats_c['criados']} novos), "
+                    f"{stats_o['total']} pedidos ({stats_o['criados']} novos)",
+                    messages.SUCCESS
+                )
+            except Exception as e:
+                self.message_user(request, f"{empresa.nome}: Erro - {e}", messages.ERROR)
+    sync_woocommerce_agora.short_description = 'Sync WooCommerce (clientes + pedidos)'
+
+    def enviar_promocoes_agora(self, request, queryset):
+        """Action: rodar envio de promocoes (leads + carrinhos + inativos) agora."""
+        from customers.tasks import (
+            _processar_leads_dia_anterior,
+            _processar_carts_dia_anterior,
+            _processar_clientes_inativos,
+        )
+
+        for empresa in queryset:
+            if not empresa.meta_phone_number_id or not empresa.meta_access_token:
+                self.message_user(request, f"{empresa.nome}: Meta WhatsApp nao configurado", messages.WARNING)
+                continue
+
+            leads = _processar_leads_dia_anterior(empresa)
+            carts = _processar_carts_dia_anterior(empresa)
+            inativos = _processar_clientes_inativos(empresa)
+
+            self.message_user(
+                request,
+                f"{empresa.nome}: {leads} leads, {carts} carrinhos, {inativos} inativos enviados",
+                messages.SUCCESS
+            )
+    enviar_promocoes_agora.short_description = 'Enviar Promocoes Agora (leads + carrinhos + inativos)'
 
     def has_module_permission(self, request):
         """Superusers ou usuarios vinculados a alguma empresa"""

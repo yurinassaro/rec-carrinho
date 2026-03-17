@@ -16,30 +16,108 @@
   white-space: nowrap;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
+#crm-save-btn:hover { background: #1ea952; transform: scale(1.02); }
+#crm-save-btn.crm-saved { background: #0088cc; }
+#crm-save-btn.crm-exists { background: #6c757d; }
+#crm-save-btn.crm-error { background: #dc3545; }
 
-#crm-save-btn:hover {
-  background: #1ea952;
-  transform: scale(1.02);
+/* Modal */
+.crm-modal-backdrop {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 99998;
+}
+.crm-modal-content {
+  position: fixed;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: #fff;
+  border-radius: 12px;
+  width: 380px;
+  max-height: 90vh;
+  overflow-y: auto;
+  z-index: 99999;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.crm-modal-header {
+  background: #25D366;
+  color: white;
+  padding: 16px 20px;
+  font-size: 16px;
+  font-weight: 700;
+  border-radius: 12px 12px 0 0;
+}
+.crm-modal-body {
+  padding: 20px;
+}
+.crm-modal-footer {
+  padding: 12px 20px;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  border-top: 1px solid #eee;
 }
 
-#crm-save-btn.crm-saving {
-  background: #f0b429;
-  cursor: wait;
+/* Campos */
+.crm-field {
+  margin-bottom: 14px;
+}
+.crm-field label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #555;
+  margin-bottom: 4px;
+}
+.crm-field input,
+.crm-field select,
+.crm-field textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+  outline: none;
+  transition: border 0.2s;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+.crm-field input:focus,
+.crm-field select:focus,
+.crm-field textarea:focus {
+  border-color: #25D366;
+}
+.crm-field textarea {
+  resize: vertical;
 }
 
-#crm-save-btn.crm-saved {
-  background: #0088cc;
+/* Botões modal */
+.crm-btn-cancel {
+  padding: 8px 18px;
+  background: #f5f5f5;
+  color: #333;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
 }
-
-#crm-save-btn.crm-exists {
-  background: #6c757d;
+.crm-btn-cancel:hover { background: #eee; }
+.crm-btn-save {
+  padding: 8px 24px;
+  background: #25D366;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
 }
+.crm-btn-save:hover { background: #1ea952; }
+.crm-btn-save:disabled { background: #ccc; cursor: wait; }
 
-#crm-save-btn.crm-error {
-  background: #dc3545;
-}
-
-/* Tooltip/feedback */
+/* Feedback toast */
 #crm-feedback {
   position: fixed;
   bottom: 20px;
@@ -49,25 +127,14 @@
   color: white;
   font-size: 14px;
   font-weight: 500;
-  z-index: 99999;
+  z-index: 100000;
   opacity: 0;
   transition: opacity 0.3s ease;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  max-width: 350px;
 }
-
-#crm-feedback.show {
-  opacity: 1;
-}
-
-#crm-feedback.success {
-  background: #25D366;
-}
-
-#crm-feedback.error {
-  background: #dc3545;
-}
-
-#crm-feedback.info {
-  background: #0088cc;
-}
+#crm-feedback.show { opacity: 1; }
+#crm-feedback.success { background: #25D366; }
+#crm-feedback.error { background: #dc3545; }
+#crm-feedback.info { background: #0088cc; }

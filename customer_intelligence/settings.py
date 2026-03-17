@@ -132,6 +132,16 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # CORS
 CORS_ALLOW_ALL_ORIGINS = DEBUG
+CORS_ALLOWED_ORIGINS = [
+    'https://web.whatsapp.com',
+    'https://leads.posvendafacil.com.br',
+]
+CORS_ALLOW_HEADERS = [
+    'content-type',
+    'x-api-key',
+    'accept',
+    'origin',
+]
 
 # Celery
 CELERY_BROKER_URL = config('REDIS_URL', default='redis://localhost:6379/0')
@@ -152,6 +162,14 @@ CELERY_BEAT_SCHEDULE = {
     'refresh-bling-tokens': {
         'task': 'bling.refresh_tokens',
         'schedule': 30 * 60,  # a cada 30 minutos
+    },
+    'import-ssh-diario': {
+        'task': 'customers.import_ssh_diario',
+        'schedule': crontab(hour=8, minute=30),  # todo dia as 8h30 (carrinhos + leads via SSH)
+    },
+    'sync-woocommerce-diario': {
+        'task': 'customers.sync_woocommerce_diario',
+        'schedule': crontab(hour=9, minute=0),  # todo dia as 9h (clientes + pedidos via API)
     },
     'enviar-promocoes-diarias': {
         'task': 'customers.enviar_promocoes_diarias',
