@@ -62,6 +62,7 @@ MIDDLEWARE = [
     # Multi-tenant middleware
     'tenants.middleware.TenantMiddleware',
     'tenants.middleware.TenantRequiredMiddleware',
+    'customers.middleware_crm.CRMButtonMiddleware',
 ]
 
 ROOT_URLCONF = 'customer_intelligence.urls'
