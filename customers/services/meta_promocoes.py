@@ -3,6 +3,9 @@ Servico de envio de mensagens promocionais via Meta WhatsApp Cloud API.
 Templates aprovados para leads e carrinhos abandonados.
 """
 import logging
+import requests
+from datetime import timedelta
+from django.core.cache import cache
 from django.utils import timezone
 
 from bling.meta_whatsapp import MetaWhatsAppClient
@@ -10,6 +13,53 @@ from customers.models import MensagemWhatsApp
 from customers.services.wapi import formatar_telefone
 
 logger = logging.getLogger(__name__)
+
+
+def _detectar_idioma_template(empresa, template_name):
+    """
+    Detecta idioma de um template aprovado na Meta (cached por 1h).
+    Retorna 'pt_BR' como default se nao encontrar.
+    """
+    if not template_name or not empresa.meta_waba_id:
+        return 'pt_BR'
+    cache_key = f'meta_template_langs_{empresa.id}'
+    langs = cache.get(cache_key)
+    if not langs:
+        langs = {}
+        try:
+            r = requests.get(
+                f'https://graph.facebook.com/v22.0/{empresa.meta_waba_id}/message_templates',
+                params={'fields': 'name,language,status', 'limit': 100},
+                headers={'Authorization': f'Bearer {empresa.meta_access_token}'},
+                timeout=10,
+            )
+            if r.ok:
+                for t in r.json().get('data', []):
+                    if t.get('status') == 'APPROVED':
+                        langs[t['name']] = t.get('language', 'pt_BR')
+                cache.set(cache_key, langs, 3600)
+        except Exception as e:
+            logger.error(f'Erro detectar idioma template: {e}')
+    return langs.get(template_name, 'pt_BR')
+
+# Frequency cap: nao envia o mesmo tipo de template para o mesmo telefone
+# em menos de N dias (evita spam por leads/carts duplicados).
+FREQUENCY_CAP_DIAS = 30
+
+
+def _ja_recebeu_recentemente(empresa, telefone, tipos):
+    """Verifica se o telefone recebeu algum dos tipos nos ultimos N dias."""
+    if not telefone or not tipos:
+        return False
+    cutoff = timezone.now() - timedelta(days=FREQUENCY_CAP_DIAS)
+    return MensagemWhatsApp.objects.filter(
+        empresa=empresa,
+        canal='meta',
+        destinatario_telefone=telefone,
+        tipo__in=tipos,
+        status__in=['enviado', 'entregue', 'lido'],
+        created_at__gte=cutoff,
+    ).exists()
 
 
 def _get_meta_client(empresa):
@@ -105,15 +155,30 @@ def enviar_meta_lead(lead, empresa):
         template_name = empresa.meta_template_lead_cliente
         tipo = 'lead_cliente'
     else:
-        template_name = empresa.meta_template_lead_nao_cliente
+        # Preferir template com cupom se configurado, fallback pro sem cupom
+        template_name = (
+            empresa.meta_template_lead_nao_cliente_cupom
+            or empresa.meta_template_lead_nao_cliente
+        )
         tipo = 'lead'
 
     if not template_name:
         return {'success': False, 'error': f'Template Meta nao configurado para {tipo}'}
 
-    params = _build_template_params(empresa, template_name, nome)
+    # Frequency cap: nao reenvia para mesmo telefone em < 7 dias
+    if _ja_recebeu_recentemente(empresa, telefone, ['lead', 'lead_cliente']):
+        # Marca o lead como ja enviado pra nao ficar voltando na fila
+        lead.whatsapp_sent = True
+        lead.whatsapp_sent_date = timezone.now()
+        lead.whatsapp_auto_status = 'duplicado_skip'
+        lead.save(update_fields=['whatsapp_sent', 'whatsapp_sent_date', 'whatsapp_auto_status'])
+        logger.info(f"Skip lead duplicado {lead.nome} ({telefone}) - ja recebeu em <{FREQUENCY_CAP_DIAS}d")
+        return {'success': False, 'error': 'duplicado: telefone ja recebeu em menos de 7 dias', 'skipped': True}
 
-    resultado = client.enviar_template(telefone, template_name, params)
+    params = _build_template_params(empresa, template_name, nome)
+    idioma = _detectar_idioma_template(empresa, template_name)
+
+    resultado = client.enviar_template(telefone, template_name, params, language=idioma)
 
     # Registrar no historico
     _registrar_mensagem(
@@ -171,6 +236,10 @@ def enviar_meta_cart(cart, empresa):
     if not template_name:
         return {'success': False, 'error': 'Template Meta cart nao configurado'}
 
+    if _ja_recebeu_recentemente(empresa, telefone, ['cart']):
+        logger.info(f"Skip cart duplicado {customer.email} ({telefone}) - ja recebeu em <{FREQUENCY_CAP_DIAS}d")
+        return {'success': False, 'error': 'duplicado: telefone ja recebeu em menos de 7 dias', 'skipped': True}
+
     params = _build_template_params(empresa, template_name, nome)
 
     # Botao URL dinamica: usa session_id como wcf_ac_token
@@ -178,8 +247,10 @@ def enviar_meta_cart(cart, empresa):
     if cart.session_id:
         button_url_params = [cart.session_id]
 
+    idioma = _detectar_idioma_template(empresa, template_name)
     resultado = client.enviar_template(
         telefone, template_name, params,
+        language=idioma,
         button_url_params=button_url_params,
     )
 
@@ -207,6 +278,49 @@ def enviar_meta_cart(cart, empresa):
     return resultado
 
 
+def enviar_meta_pedido_cadastro(order, empresa):
+    """
+    Envia template Meta cadastro_pedido quando pedido e criado.
+    Template: meta_template_pedido_cadastro (cadastro_pedido)
+    Params: {{1}}=nome, {{2}}=numero do pedido
+    """
+    client = _get_meta_client(empresa)
+    if not client.esta_configurado():
+        return {'success': False, 'error': 'Meta WhatsApp nao configurado'}
+
+    customer = order.customer
+    telefone = formatar_telefone(customer.phone or '')
+    if not telefone:
+        return {'success': False, 'error': 'Cliente sem telefone'}
+
+    nome = customer.first_name.split()[0] if customer.first_name else 'Cliente'
+    numero_pedido = str(order.order_number or order.order_id)
+
+    template_name = empresa.meta_template_pedido_cadastro
+    if not template_name:
+        return {'success': False, 'error': 'Template Meta cadastro nao configurado'}
+
+    params = [nome, numero_pedido]
+
+    idioma = _detectar_idioma_template(empresa, template_name)
+    resultado = client.enviar_template(telefone, template_name, params, language=idioma)
+
+    _registrar_mensagem(
+        empresa=empresa, tipo='pedido_novo', canal='meta',
+        nome=nome, telefone=telefone,
+        template_name=template_name, template_params=params,
+        customer=customer,
+        resultado=resultado,
+    )
+
+    if resultado.get('success'):
+        logger.info(f"Meta cadastro_pedido enviado para {customer.email} pedido #{numero_pedido}")
+    else:
+        logger.error(f"Erro Meta cadastro_pedido {customer.email}: {resultado.get('error')}")
+
+    return resultado
+
+
 def enviar_meta_cliente_inativo(customer, empresa):
     """
     Envia template Meta para cliente inativo (reativacao com cupom).
@@ -227,9 +341,14 @@ def enviar_meta_cliente_inativo(customer, empresa):
     if not template_name:
         return {'success': False, 'error': 'Template Meta cliente inativo nao configurado'}
 
+    if _ja_recebeu_recentemente(empresa, telefone, ['cliente_inativo']):
+        logger.info(f"Skip cliente_inativo duplicado {customer.email} ({telefone}) - ja recebeu em <{FREQUENCY_CAP_DIAS}d")
+        return {'success': False, 'error': 'duplicado: telefone ja recebeu em menos de 7 dias', 'skipped': True}
+
     params = _build_template_params(empresa, template_name, nome)
 
-    resultado = client.enviar_template(telefone, template_name, params)
+    idioma = _detectar_idioma_template(empresa, template_name)
+    resultado = client.enviar_template(telefone, template_name, params, language=idioma)
 
     _registrar_mensagem(
         empresa=empresa, tipo='cliente_inativo', canal='meta',
