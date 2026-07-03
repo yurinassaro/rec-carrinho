@@ -125,6 +125,9 @@ WAPI_URL = config('WAPI_URL', default='https://api.w-api.app/v1')
 WAPI_TOKEN = config('WAPI_TOKEN', default='')
 WAPI_INSTANCE = config('WAPI_INSTANCE', default='')
 
+# Meta App Secret (para validação de signed_request no callback de exclusão de dados)
+META_APP_SECRET = config('META_APP_SECRET', default='')
+
 # Media files
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
@@ -132,10 +135,12 @@ MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # CORS
-CORS_ALLOW_ALL_ORIGINS = DEBUG
+CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = [
     'https://web.whatsapp.com',
     'https://leads.posvendafacil.com.br',
+    'https://rw6asessoria.com.br',
+    'https://www.rw6asessoria.com.br',
 ]
 CORS_ALLOW_HEADERS = [
     'content-type',
@@ -175,6 +180,24 @@ CELERY_BEAT_SCHEDULE = {
     'enviar-promocoes-diarias': {
         'task': 'customers.enviar_promocoes_diarias',
         'schedule': crontab(hour=10, minute=0),  # todo dia as 10h
+    },
+    'cupom-diario-19h': {
+        'task': 'customers.cupom_diario_19h',
+        # 19h: importa carts+leads frescos, trata quem comprou, envia cupons
+        # e manda relatorio no WhatsApp do admin (CUPOM_RELATORIO_WHATSAPP)
+        'schedule': crontab(hour=19, minute=0),
+    },
+    'monitorar-wapi-08': {
+        'task': 'customers.monitorar_wapi',
+        'schedule': crontab(hour=8, minute=0),
+    },
+    'monitorar-wapi-14': {
+        'task': 'customers.monitorar_wapi',
+        'schedule': crontab(hour=14, minute=0),
+    },
+    'monitorar-wapi-20': {
+        'task': 'customers.monitorar_wapi',
+        'schedule': crontab(hour=20, minute=0),
     },
     # Motor de Réguas
     'processar-fila-envio': {
