@@ -557,10 +557,18 @@ def cupom_diario_19h():
             logger.error(f"[{empresa.slug}] cupom_diario: erro import leads: {e}")
 
         # 2 + 3. Verificar compra e enviar cupons (mesma logica do botao)
+        # LIMITES DE SEGURANCA (licao de 05/07: 1a execucao sem filtro varreu o
+        # backlog inteiro — 2.484 envios): janela de datas + teto diario.
+        janela_dias = int(os.getenv('CUPOM_DIARIO_JANELA_DIAS', '3'))
+        limite_dia = int(os.getenv('CUPOM_DIARIO_LIMITE', '300'))
         erro_envio = ''
         stats = None
         try:
-            stats = processar_cupom_cliente(empresa, alvo='ambos', dry_run=False)
+            stats = processar_cupom_cliente(
+                empresa, alvo='ambos', dry_run=False,
+                limit=limite_dia,
+                data_inicio=(end_date - timedelta(days=janela_dias)).date(),
+            )
         except Exception as e:
             erro_envio = str(e)[:120]
             logger.exception(f"[{empresa.slug}] cupom_diario: erro no envio")
