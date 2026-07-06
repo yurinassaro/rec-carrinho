@@ -1570,6 +1570,83 @@
     document.body.appendChild(btn2);
   }
   setTimeout(injectBotoesCopiloto, 5000);
+
+  // ==================== COPILOTO AUTOMÁTICO (tempo real) ====================
+  // Liga o modo Auto e a IA passa a REAGIR sozinha: você clica numa conversa
+  // (ou chega mensagem nova com o chat aberto) → ela lê e sugere. Sem botão.
+  // Debounce + assinatura da conversa evitam chamadas repetidas (custo).
+  let autoLigado = false;
+  let autoTimer = null;
+  let autoUltimaAssinatura = "";
+  let autoPensando = false;
+
+  function assinaturaConversa() {
+    const { nome, mensagens } = lerConversaAberta(6);
+    if (!mensagens.length) return "";
+    const ult = mensagens[mensagens.length - 1];
+    return `${nome}|${mensagens.length}|${(ult.autor + ult.texto).slice(0, 90)}`;
+  }
+
+  function agendarAutoSugestao() {
+    if (!autoLigado || autoPensando) return;
+    clearTimeout(autoTimer);
+    autoTimer = setTimeout(async () => {
+      if (!autoLigado || autoPensando) return;
+      const { mensagens } = lerConversaAberta();
+      if (!mensagens.length) return;
+      const ult = mensagens[mensagens.length - 1];
+      if (ult.autor !== "cliente") return; // só sugere quando o CLIENTE falou por último
+      const assin = assinaturaConversa();
+      if (!assin || assin === autoUltimaAssinatura) return; // nada mudou → não gasta IA
+      autoUltimaAssinatura = assin;
+      autoPensando = true;
+      try {
+        await sugerirConversaAtual();
+      } finally {
+        autoPensando = false;
+      }
+    }, 1000); // espera a conversa terminar de renderizar
+  }
+
+  function iniciarObserverAuto() {
+    const app = document.querySelector("#app");
+    if (!app) {
+      setTimeout(iniciarObserverAuto, 3000);
+      return;
+    }
+    const obs = new MutationObserver(agendarAutoSugestao);
+    obs.observe(app, { childList: true, subtree: true });
+    console.log("[Copiloto] Observer do modo automático ativo");
+  }
+
+  function injectBotaoAuto() {
+    if (document.getElementById("crm-copiloto-auto-btn")) return;
+    const btn = document.createElement("button");
+    btn.id = "crm-copiloto-auto-btn";
+    btn.title = "Modo automático: ao abrir uma conversa (ou chegar msg nova), a IA lê e sugere sozinha";
+    const pintar = () => {
+      btn.textContent = autoLigado ? "⚡ Auto: LIGADO" : "⚡ Auto: desligado";
+      btn.style.cssText =
+        "position:fixed;right:16px;bottom:128px;z-index:99998;border:none;border-radius:24px;" +
+        "padding:10px 16px;font-weight:600;font-size:13px;cursor:pointer;color:#fff;" +
+        "box-shadow:0 4px 14px rgba(0,0,0,.25);" +
+        (autoLigado ? "background:#f59e0b;" : "background:#54656f;");
+    };
+    pintar();
+    btn.addEventListener("click", () => {
+      autoLigado = !autoLigado;
+      autoUltimaAssinatura = ""; // re-sugere a conversa atual ao ligar
+      pintar();
+      showFeedback(autoLigado
+        ? "⚡ Copiloto automático LIGADO — clique numa conversa e aguarde"
+        : "Copiloto automático desligado", "info");
+      if (autoLigado) agendarAutoSugestao();
+    });
+    document.body.appendChild(btn);
+  }
+  setTimeout(injectBotaoAuto, 5000);
+  setTimeout(iniciarObserverAuto, 6000);
+
   window.__crmCopiloto = { sugerirConversaAtual, copilotoNaoLidas, lerConversaAberta, cliqueReal };
 
   waitForWhatsApp();
