@@ -1570,11 +1570,18 @@
   async function sugerirConversaAtual(extra = {}) {
     const { nome, mensagens } = lerConversaAberta();
     if (!mensagens.length) {
-      showFeedback("Abra uma conversa com mensagens primeiro", "error");
+      if (!extra.silencioso) showFeedback("Abra uma conversa com mensagens primeiro", "error");
       return false;
     }
-    showFeedback("🧠 Pensando na resposta…", "info");
-    const res = await apiCall("sugerir/", "POST", { nome, mensagens });
+    if (!extra.silencioso) showFeedback("🧠 Pensando na resposta…", "info");
+    let res = null;
+    try {
+      res = await apiCall("sugerir/", "POST", { nome, mensagens });
+    } catch (e) {
+      console.error("[Copiloto] erro de rede:", e);
+      showFeedback("Erro de rede na sugestão — tente de novo", "error");
+      return false;
+    }
     if (!res || res.error) {
       showFeedback("Erro na sugestão: " + ((res && res.error) || "sem resposta"), "error");
       return false;
@@ -1646,11 +1653,15 @@
   let autoUltimaAssinatura = "";
   let autoPensando = false;
 
+  let autoUltimaChamada = 0;
+
+  // Assinatura SÓ das mensagens (o nome do contato carrega atrasado no header
+  // e re-disparava a IA à toa — bug real de 06/07)
   function assinaturaConversa() {
-    const { nome, mensagens } = lerConversaAberta(6);
+    const { mensagens } = lerConversaAberta(6);
     if (!mensagens.length) return "";
     const ult = mensagens[mensagens.length - 1];
-    return `${nome}|${mensagens.length}|${(ult.autor + ult.texto).slice(0, 90)}`;
+    return `${mensagens.length}|${(ult.autor + "|" + ult.texto).slice(0, 100)}`;
   }
 
   function agendarAutoSugestao() {
@@ -1658,6 +1669,7 @@
     clearTimeout(autoTimer);
     autoTimer = setTimeout(async () => {
       if (!autoLigado || autoPensando) return;
+      if (Date.now() - autoUltimaChamada < 8000) return; // cooldown anti-loop (8s)
       const { mensagens } = lerConversaAberta();
       if (!mensagens.length) return;
       const ult = mensagens[mensagens.length - 1];
@@ -1665,13 +1677,14 @@
       const assin = assinaturaConversa();
       if (!assin || assin === autoUltimaAssinatura) return; // nada mudou → não gasta IA
       autoUltimaAssinatura = assin;
+      autoUltimaChamada = Date.now();
       autoPensando = true;
       try {
-        await sugerirConversaAtual();
+        await sugerirConversaAtual({ silencioso: true }); // sem toast repetido no modo auto
       } finally {
         autoPensando = false;
       }
-    }, 1000); // espera a conversa terminar de renderizar
+    }, 1200); // espera a conversa terminar de renderizar
   }
 
   function iniciarObserverAuto() {
