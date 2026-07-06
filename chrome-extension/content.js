@@ -1404,35 +1404,101 @@
       .filter((l) => l.querySelector('span[aria-label*="não lida"], span[aria-label*="unread"]'));
   }
 
-  // Lê as mensagens da conversa ABERTA (#main). Retorna [{autor, texto}] cronológico.
+  // Lê as mensagens da conversa ABERTA. Retorna [{autor, texto}] cronológico.
+  // O DOM do WhatsApp muda com frequência → 3 estratégias em cascata:
+  //   1. classes clássicas .message-in/.message-out
+  //   2. divs com [data-pre-plain-text] (toda msg de texto tem)
+  //   3. div[role="row"] genéricas do painel
+  // Direção: classe → ticks de envio (só msg NOSSA tem ✓) → alinhamento (direita=loja)
   function lerConversaAberta(maxMsgs = 20) {
-    const main = document.querySelector("#main");
+    const main = document.querySelector("#main")
+      || document.querySelector('div[data-testid="conversation-panel-wrapper"]');
     if (!main) return { nome: "", mensagens: [] };
 
-    const nomeEl = main.querySelector("header span[title]");
+    const nomeEl = main.querySelector("header span[title]") || main.querySelector("header span[dir='auto']");
     const nome = nomeEl ? (nomeEl.getAttribute("title") || nomeEl.textContent || "").trim() : "";
 
-    const bolhas = [...main.querySelectorAll("div.message-in, div.message-out")];
+    // ── cascata de seletores de bolha ──
+    let bolhas = [...main.querySelectorAll("div.message-in, div.message-out")];
+    let modo = "classes";
+    if (!bolhas.length) {
+      const pre = [...main.querySelectorAll("div[data-pre-plain-text]")];
+      bolhas = pre.map((el) => el.closest('div[role="row"]') || el);
+      modo = "pre-plain";
+    }
+    if (!bolhas.length) {
+      bolhas = [...main.querySelectorAll('div[role="row"]')];
+      modo = "rows";
+    }
+    console.log(`[Copiloto] leitura via '${modo}': ${bolhas.length} bolhas`);
+
+    const mainRect = main.getBoundingClientRect();
+    const meioX = mainRect.left + mainRect.width / 2;
+
     const mensagens = [];
     bolhas.slice(-maxMsgs).forEach((b) => {
-      const autor = b.classList.contains("message-in") ? "cliente" : "loja";
+      // ── direção ──
+      let autor = null;
+      if (b.classList && b.classList.contains("message-in")) autor = "cliente";
+      else if (b.classList && b.classList.contains("message-out")) autor = "loja";
+      if (!autor) {
+        // ticks (✓ / ✓✓) só existem em mensagem ENVIADA por nós
+        if (b.querySelector('span[data-icon="msg-check"], span[data-icon="msg-dblcheck"], span[data-icon="msg-time"]')) {
+          autor = "loja";
+        } else {
+          // alinhamento: bolha do lado direito = nossa
+          const inner = b.querySelector("div[data-pre-plain-text], div.copyable-text, div") || b;
+          const r = inner.getBoundingClientRect();
+          autor = (r.left + r.width / 2) > meioX ? "loja" : "cliente";
+        }
+      }
+
+      // ── texto ──
       let texto = "";
-      const txtEl = b.querySelector("span.selectable-text, div.selectable-text");
+      const txtEl = b.querySelector("span.selectable-text, div.selectable-text, div.copyable-text span[dir='ltr'], div.copyable-text span[dir='auto']");
       if (txtEl) texto = (txtEl.textContent || "").trim();
       if (!texto) {
-        // mídia sem texto: marca pro modelo saber que existe algo não-textual
-        if (b.querySelector('span[data-icon="audio-play"], button[aria-label*="udio"]')) {
-          texto = "[O cliente enviou um áudio]";
-        } else if (b.querySelector('img[src^="blob:"], img[data-testid="image-thumb"]')) {
-          texto = "[O cliente enviou uma imagem]";
-        } else if (b.querySelector('span[data-icon="video-pip"], video')) {
-          texto = "[O cliente enviou um vídeo]";
-        }
-        if (texto && autor === "loja") texto = texto.replace("O cliente enviou", "A loja enviou");
+        const preEl = b.matches && b.matches("div[data-pre-plain-text]") ? b : b.querySelector("div[data-pre-plain-text]");
+        if (preEl) texto = (preEl.textContent || "").trim();
       }
-      if (texto) mensagens.push({ autor, texto });
+      if (!texto) {
+        const quem = autor === "loja" ? "A loja enviou" : "O cliente enviou";
+        if (b.querySelector('span[data-icon="audio-play"], button[aria-label*="udio"]')) {
+          texto = `[${quem} um áudio]`;
+        } else if (b.querySelector('img[src^="blob:"], img[data-testid="image-thumb"]')) {
+          texto = `[${quem} uma imagem]`;
+        } else if (b.querySelector('span[data-icon="video-pip"], video')) {
+          texto = `[${quem} um vídeo]`;
+        }
+      }
+      // ignora divisores de data/avisos do sistema ("HOJE", "As mensagens são protegidas…")
+      if (texto && texto.length > 1 && !/^(hoje|ontem|você desativou|as mensagens)/i.test(texto)) {
+        mensagens.push({ autor, texto });
+      }
     });
+    console.log(`[Copiloto] ${mensagens.length} mensagens lidas (última: ${mensagens.length ? mensagens[mensagens.length - 1].autor : "-"})`);
     return { nome, mensagens };
+  }
+
+  // Diagnóstico: rode __crmCopiloto.diagnosticar() no console (F12) e me mande o print
+  function diagnosticarCopiloto() {
+    const main = document.querySelector("#main");
+    console.log("[Copiloto DIAG] #main existe:", !!main);
+    if (!main) return;
+    [
+      "div.message-in", "div.message-out",
+      "div[data-pre-plain-text]",
+      'div[role="row"]',
+      "span.selectable-text",
+      "div.copyable-text",
+      'span[data-icon="msg-dblcheck"]',
+    ].forEach((sel) => {
+      console.log(`[Copiloto DIAG] ${main.querySelectorAll(sel).length.toString().padStart(4)} × ${sel}`);
+    });
+    const r = main.querySelector('div[role="row"]');
+    if (r) console.log("[Copiloto DIAG] amostra de row:", r.outerHTML.slice(0, 400));
+    const lido = lerConversaAberta();
+    console.log("[Copiloto DIAG] resultado:", JSON.stringify(lido).slice(0, 600));
   }
 
   // Insere texto no campo de digitação (contenteditable do React)
@@ -1647,7 +1713,7 @@
   setTimeout(injectBotaoAuto, 5000);
   setTimeout(iniciarObserverAuto, 6000);
 
-  window.__crmCopiloto = { sugerirConversaAtual, copilotoNaoLidas, lerConversaAberta, cliqueReal };
+  window.__crmCopiloto = { sugerirConversaAtual, copilotoNaoLidas, lerConversaAberta, cliqueReal, diagnosticar: diagnosticarCopiloto };
 
   waitForWhatsApp();
 })();
