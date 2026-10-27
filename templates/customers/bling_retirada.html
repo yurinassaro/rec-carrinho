@@ -1,0 +1,171 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>Aguardando Retirada — {{ empresa.nome }}</title>
+  <style>
+    :root {
+      --bg: #0f1117; --panel: #171a21; --border: #262a35;
+      --text: #e4e6eb; --muted: #8b90a0; --accent: #6366f1;
+      --green: #25D366; --green-dark: #1da851;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 24px;
+    }
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
+    h1 { font-size: 20px; margin: 0; }
+    .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+    .back { color: var(--muted); text-decoration: none; font-size: 13px; }
+    .back:hover { color: var(--text); }
+    .erro { background: #3b1d1d; border: 1px solid #5c2b2b; color: #ffb4b4; padding: 14px 16px; border-radius: 10px; margin-bottom: 18px; font-size: 14px; }
+    .empty { color: var(--muted); padding: 40px; text-align: center; border: 1px dashed var(--border); border-radius: 12px; }
+    table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 12px; overflow: hidden; }
+    th, td { text-align: left; padding: 12px 14px; font-size: 13px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: .04em; }
+    tr:last-child td { border-bottom: none; }
+    .codigo { font-family: monospace; color: #c7cbf5; }
+    .tel { color: var(--muted); }
+    a.rastreio { color: var(--accent); text-decoration: none; font-size: 12px; }
+    a.rastreio:hover { text-decoration: underline; }
+    .preview { color: var(--muted); font-size: 11px; max-width: 320px; white-space: pre-wrap; margin-top: 4px; display: none; }
+    .preview.show { display: block; }
+    .toggle { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 11px; padding: 0; }
+    .btn-zap {
+      background: var(--green); color: #fff; border: none; padding: 7px 14px;
+      border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;
+      display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+    }
+    .btn-zap:hover { background: var(--green-dark); }
+    .btn-zap:disabled { opacity: .55; cursor: default; }
+    .badge-sent { color: var(--green); font-size: 12px; font-weight: 600; }
+    .badge-no-tel { color: #c98b3b; font-size: 12px; }
+    #toast { position: fixed; bottom: 24px; right: 24px; padding: 12px 18px; border-radius: 10px; font-size: 14px; color: #fff; opacity: 0; transition: opacity .25s; pointer-events: none; }
+    #toast.show { opacity: 1; }
+    #toast.ok { background: var(--green-dark); }
+    #toast.err { background: #b3261e; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>📦 Aguardando Retirada</h1>
+      <div class="sub">
+        {{ empresa.nome }} · {{ itens|length }} objeto(s) aguardando retirada nos Correios
+        {% if id_logistica %}· logística #{{ id_logistica }}{% endif %}
+      </div>
+    </div>
+    <a class="back" href="/crm/">← Voltar ao CRM</a>
+  </div>
+
+  {% if erro %}
+    <div class="erro">⚠️ {{ erro }}</div>
+  {% endif %}
+
+  {% if itens %}
+    <table>
+      <thead>
+        <tr>
+          <th>Pedido</th>
+          <th>Cliente</th>
+          <th>Telefone</th>
+          <th>Rastreio</th>
+          <th style="text-align:right">Ação</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in itens %}
+        <tr id="row-{{ forloop.counter }}">
+          <td>#{{ item.pedido_numero }}</td>
+          <td>
+            {{ item.contato_nome|default:"—" }}
+            <button class="toggle" onclick="togglePreview({{ forloop.counter }})">ver mensagem</button>
+            <div class="preview" id="prev-{{ forloop.counter }}">{{ item.preview }}</div>
+          </td>
+          <td class="tel">{{ item.telefone_fmt|default:"—" }}</td>
+          <td>
+            <span class="codigo">{{ item.codigo_rastreio|default:"—" }}</span>
+            {% if item.rastreio_url %}<br><a class="rastreio" href="{{ item.rastreio_url }}" target="_blank">rastrear ↗</a>{% endif %}
+          </td>
+          <td style="text-align:right">
+            {% if not item.telefone_fmt %}
+              <span class="badge-no-tel">sem telefone</span>
+            {% else %}
+              <span class="badge-sent" id="sent-{{ forloop.counter }}" {% if not item.ja_enviado %}style="display:none"{% endif %}>✓ enviado</span>
+              <button class="btn-zap" id="btn-{{ forloop.counter }}"
+                {% if item.ja_enviado %}style="display:none"{% endif %}
+                onclick="enviar({{ forloop.counter }}, this)"
+                data-telefone="{{ item.telefone_fmt }}"
+                data-nome="{{ item.contato_nome|escapejs }}"
+                data-pedido="{{ item.pedido_numero }}"
+                data-codigo="{{ item.codigo_rastreio|escapejs }}"
+                data-link="{{ item.rastreio_url|escapejs }}">
+                <span>📲</span> Enviar WhatsApp
+              </button>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% elif not erro %}
+    <div class="empty">Nenhum objeto aguardando retirada no momento. 🎉</div>
+  {% endif %}
+
+  <div id="toast"></div>
+
+  <script>
+    const CSRF = document.querySelector('meta[name="csrf-token"]').content;
+
+    function togglePreview(i) {
+      document.getElementById('prev-' + i).classList.toggle('show');
+    }
+
+    function showToast(msg, ok) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'show ' + (ok ? 'ok' : 'err');
+      setTimeout(() => { t.className = ''; }, 3500);
+    }
+
+    function enviar(i, btn) {
+      btn.disabled = true;
+      const original = btn.innerHTML;
+      btn.innerHTML = 'Enviando…';
+      fetch('/crm/retirada/enviar/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+        body: JSON.stringify({
+          telefone: btn.dataset.telefone,
+          nome: btn.dataset.nome,
+          pedido: btn.dataset.pedido,
+          codigo: btn.dataset.codigo,
+          link: btn.dataset.link,
+        }),
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) {
+          btn.style.display = 'none';
+          document.getElementById('sent-' + i).style.display = 'inline';
+          showToast('Mensagem enviada para ' + (btn.dataset.nome || btn.dataset.telefone), true);
+        } else {
+          btn.disabled = false;
+          btn.innerHTML = original;
+          showToast('Erro: ' + (data.error || 'falha ao enviar'), false);
+        }
+      })
+      .catch(err => {
+        btn.disabled = false;
+        btn.innerHTML = original;
+        showToast('Erro de rede: ' + err, false);
+      });
+    }
+  </script>
+</body>
+</html>
