@@ -79,6 +79,15 @@
   .rr-vazio { padding: 18px; text-align: center; color: #667781; font-size: 13px; }
   .rr-dica { font-size: 11px; color: #8696a0; padding: 7px 14px; background: #f8f9fa; border-top: 1px solid #e9edef; }
 
+  /* Aviso da IA: de onde veio a sugestão e o quanto ela confia. O atendente
+     precisa saber que aquilo é sugestão, não resposta oficial da loja. */
+  .ia-aviso { display: none; padding: 8px 16px; font-size: 12px; background: #e7f3ff; color: #0b4f8a; border-top: 1px solid #cfe4f7; }
+  .ia-aviso.on { display: block; }
+  .ia-aviso.erro { background: #fdecea; color: #a32018; border-top-color: #f5c6c2; }
+  .ia-aviso.baixa { background: #fff3cd; color: #8a5a00; border-top-color: #ffe08a; }
+  .ia-aviso b { font-weight: 600; }
+  #btnIA.pensando { opacity: 0.6; cursor: progress; }
+
   .btn-fechar { background: white; border: 1px solid #25d366; color: #0b7a3e; font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 14px; cursor: pointer; white-space: nowrap; }
   .btn-fechar:hover { background: #25d366; color: white; }
   .btn-fechar[disabled] { opacity: 0.6; cursor: default; }
@@ -417,6 +426,54 @@ function inserirResposta(r) {
   }).catch(() => {});  // contador é cosmético, não pode atrapalhar o atendimento
 }
 
+// ============ SUGESTÃO DA IA ============
+function avisoIA(html, classe) {
+  const el = document.getElementById('iaAviso');
+  if (!el) return;
+  el.className = 'ia-aviso on' + (classe ? ' ' + classe : '');
+  el.innerHTML = html;
+}
+
+function limparAvisoIA() {
+  const el = document.getElementById('iaAviso');
+  if (el) el.className = 'ia-aviso';
+}
+
+async function sugerirComIA() {
+  const btn = document.getElementById('btnIA');
+  const inp = document.getElementById('msgInput');
+  if (!btn || !inp || !STATE.telSelecionado) return;
+  if (btn.classList.contains('pensando')) return;  // a Ana pode levar ~30s
+
+  btn.classList.add('pensando');
+  avisoIA('🧠 Pensando… a IA está lendo a conversa.');
+  try {
+    const fd = new FormData();
+    fd.append('telefone', STATE.telSelecionado);
+    const r = await fetch('/crm/inbox/sugerir/', {
+      method: 'POST', headers: { 'X-CSRFToken': getCookie('csrftoken') }, body: fd,
+    });
+    const data = await r.json();
+    if (!r.ok || data.error) throw new Error(data.error || 'falhou');
+
+    inp.value = data.resposta || '';
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(inp.scrollHeight, 180) + 'px';
+    inp.focus();
+
+    const quem = data.fonte === 'neuraxo-agent' ? (data.agente || 'Ana') : 'IA';
+    const partes = [`🧠 Sugestão de <b>${escapeHtml(quem)}</b> — revise antes de enviar.`];
+    if (data.observacao) partes.push(escapeHtml(data.observacao));
+    if (data.escalar) partes.push('⚠️ <b>A IA acha que isso precisa de um humano.</b>');
+    // Confiança baixa pinta de amarelo: é o sinal pra ler com atenção.
+    avisoIA(partes.join(' · '), data.escalar || data.confianca === 'baixa' ? 'baixa' : '');
+  } catch (e) {
+    avisoIA('🧠 Não consegui sugerir: ' + escapeHtml(e.message), 'erro');
+  } finally {
+    btn.classList.remove('pensando');
+  }
+}
+
 function moverSelecaoRapidas(delta) {
   if (!STATE.rrFiltradas.length) return;
   STATE.rrSel = (STATE.rrSel + delta + STATE.rrFiltradas.length) % STATE.rrFiltradas.length;
@@ -489,6 +546,7 @@ function renderChat() {
 
   const composerHtml = STATE.janelaAberta ? `
     <div class="rr-wrap">
+      <div class="ia-aviso" id="iaAviso"></div>
       <div class="rr-painel" id="rrPainel">
         <div class="rr-topo">
           <input type="search" id="rrBusca" placeholder="Buscar mensagem pronta..." autocomplete="off">
@@ -502,6 +560,7 @@ function renderChat() {
         <input type="file" id="fileInput" style="display:none;" accept="image/*,audio/*,video/*,application/pdf">
         <button id="btnAudio" type="button" title="Gravar audio">🎤</button>
         <button id="btnRapidas" type="button" title="Mensagens rápidas (ou digite / na mensagem)">⚡</button>
+        <button id="btnIA" type="button" title="Sugerir resposta com a IA — você revisa antes de enviar">🧠</button>
         <textarea id="msgInput" placeholder="Digite sua mensagem... (/ abre as mensagens prontas)" rows="1"></textarea>
         <button id="btnEnviar" class="send" title="Enviar">➤</button>
       </div>
@@ -600,6 +659,8 @@ function attachChatListeners() {
   if (btnS) btnS.addEventListener('click', enviarMensagem);
   const btnR = document.getElementById('btnRapidas');
   if (btnR) btnR.addEventListener('click', () => abrirRapidas(''));
+  const btnIA = document.getElementById('btnIA');
+  if (btnIA) btnIA.addEventListener('click', sugerirComIA);
   const rrF = document.getElementById('rrFechar');
   if (rrF) rrF.addEventListener('click', fecharRapidas);
   const rrB = document.getElementById('rrBusca');

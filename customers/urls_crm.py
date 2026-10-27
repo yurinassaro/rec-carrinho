@@ -11,6 +11,7 @@ urlpatterns = [
     path('inbox/enviar/', views_inbox.inbox_enviar, name='inbox_enviar'),
     path('inbox/midia/<int:msg_id>/', views_inbox.inbox_midia, name='inbox_midia'),
     path('inbox/fechar/', views_inbox.inbox_fechar, name='inbox_fechar'),
+    path('inbox/sugerir/', views_inbox.inbox_sugerir, name='inbox_sugerir'),
     path('inbox/api/respostas/', views_inbox.inbox_respostas_api, name='inbox_respostas_api'),
     path('inbox/api/respostas/usada/', views_inbox.inbox_resposta_usada, name='inbox_resposta_usada'),
     path('inbox/api/conversas/', views_inbox.inbox_conversas_api, name='inbox_conversas_api'),

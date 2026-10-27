@@ -427,6 +427,78 @@ def inbox_resposta_usada(request):
     return JsonResponse({'success': True})
 
 
+def _conversa_para_ia(tenant, telefones, limite=20):
+    """
+    Últimas mensagens da conversa no formato que o copiloto espera:
+    [{'autor': 'cliente'|'loja', 'texto': str}] em ordem cronológica.
+
+    Templates entram renderizados — a IA precisa ver o que o cliente leu, não
+    o nome interno do template.
+    """
+    msgs = list(
+        MensagemWhatsApp.objects.filter(
+            empresa=tenant, canal='meta', destinatario_telefone__in=list(telefones),
+        ).order_by('-created_at')[:limite]
+    )
+    msgs.reverse()
+
+    templates_meta = _carregar_templates_meta(tenant) if any(m.template_name for m in msgs) else {}
+    conversa = []
+    for m in msgs:
+        texto = m.mensagem_texto or ''
+        if not texto and m.template_name:
+            texto = _renderizar_template(
+                templates_meta.get(m.template_name), m.template_params or [],
+            ) or f'(template: {m.template_name})'
+        if not texto.strip():
+            continue
+        conversa.append({
+            'autor': 'cliente' if m.tipo == 'resposta_cliente' else 'loja',
+            'texto': texto,
+        })
+    return conversa
+
+
+@login_required
+@require_POST
+def inbox_sugerir(request):
+    """
+    Sugestão da IA para a conversa aberta no inbox.
+
+    Monta a conversa a partir do banco (o inbox já tem o histórico, diferente da
+    extensão que precisa ler o DOM do WhatsApp Web) e devolve o texto sugerido.
+    NÃO envia: o atendente revisa, edita e decide.
+    """
+    from customers.permissions import modulo_liberado
+    from customers.services import copiloto
+
+    tenant = getattr(request, 'tenant', None)
+    if not tenant:
+        return JsonResponse({'error': 'sem empresa'}, status=403)
+    if not modulo_liberado(tenant, 'whatsapp_ia'):
+        return JsonResponse({'error': 'Módulo de IA não está no seu plano'}, status=403)
+
+    telefone = (request.POST.get('telefone') or '').strip()
+    if not telefone:
+        return JsonResponse({'error': 'telefone obrigatorio'}, status=400)
+
+    todos_tels = _variantes_na_base(tenant, telefone)
+    mensagens = _conversa_para_ia(tenant, todos_tels)
+    ultima = MensagemWhatsApp.objects.filter(
+        empresa=tenant, canal='meta', destinatario_telefone__in=list(todos_tels),
+    ).order_by('-created_at').first()
+    nome = (ultima.destinatario_nome if ultima else '') or ''
+
+    try:
+        resultado = copiloto.sugerir(tenant, nome, mensagens, telefone, origem='inbox')
+    except copiloto.CopilotoSemContexto as e:
+        return JsonResponse({'error': str(e)}, status=502)
+    except copiloto.CopilotoErro as e:
+        return JsonResponse({'error': str(e)}, status=502)
+
+    return JsonResponse(resultado)
+
+
 @login_required
 def inbox_conversas_api(request):
     """JSON: lista de conversas."""
