@@ -62,3 +62,8 @@ node_modules/
 *.key
 *.crt
 *.p12
+# Quadro interno de metas (skill metas) — nunca versionar
+.claude/metas/
+
+# Saída local do Playwright MCP (screenshots/snapshots de teste)
+.playwright-mcp/
