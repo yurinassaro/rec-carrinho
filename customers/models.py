@@ -469,6 +469,8 @@ class MensagemWhatsApp(models.Model):
         ('pedido_concluido', 'Pedido Concluido'),
         ('pedido_cancelado', 'Pedido Cancelado'),
         ('resposta_cliente', 'Resposta do Cliente'),
+        ('auto_resposta', 'Auto-resposta do Bot'),
+        ('atendimento_humano', 'Atendimento Humano (Inbox)'),
     ]
 
     CANAL_CHOICES = [
@@ -513,6 +515,10 @@ class MensagemWhatsApp(models.Model):
     # Resultado
     error_message = models.TextField(blank=True)
     api_response = models.JSONField(default=dict, blank=True)
+    midia_arquivo = models.FileField(
+        upload_to='inbox_midia/%Y/%m/', blank=True, null=True,
+        help_text='Cópia local da mídia enviada pelo inbox (áudio/imagem) para replay',
+    )
 
     # ID da mensagem no Meta (para rastrear status via webhook)
     meta_message_id = models.CharField(
@@ -775,7 +781,8 @@ class ContatoPipeline(models.Model):
 
     # Dados do contato
     nome = models.CharField(max_length=255)
-    telefone = models.CharField(max_length=20, db_index=True)
+    telefone = models.CharField(max_length=20, blank=True, default='', db_index=True)
+    instagram = models.CharField(max_length=100, blank=True, default='', db_index=True, help_text='Username do Instagram (sem @)')
     email = models.EmailField(blank=True, default='')
     empresa_contato = models.CharField(max_length=255, blank=True, default='', verbose_name='Empresa do contato')
 
@@ -806,7 +813,34 @@ class ContatoPipeline(models.Model):
         indexes = [
             models.Index(fields=['empresa', 'pipeline', 'etapa', '-created_at']),
             models.Index(fields=['telefone']),
+            models.Index(fields=['empresa', 'instagram']),
         ]
 
     def __str__(self):
         return f'{self.nome} - {self.pipeline.nome} / {self.etapa.nome if self.etapa else "Sem etapa"}'
+
+
+class InstagramDMTemplate(models.Model):
+    """
+    Mensagens de DM do Instagram (boas-vindas a novos seguidores).
+    A extensao sorteia uma ativa e insere no campo do Instagram, trocando
+    {nome} pelo primeiro nome do cliente. Rotacionar varias evita bloqueio.
+    """
+    empresa = models.ForeignKey(
+        'tenants.Empresa',
+        on_delete=models.CASCADE,
+        related_name='instagram_dm_templates',
+    )
+    texto = models.TextField(help_text='Use {nome} para inserir o primeiro nome do cliente.')
+    ativo = models.BooleanField(default=True)
+    ordem = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'instagram_dm_templates'
+        verbose_name = 'Template de DM Instagram'
+        verbose_name_plural = 'Templates de DM Instagram'
+        ordering = ['ordem', 'id']
+
+    def __str__(self):
+        return f'{self.empresa.nome}: {self.texto[:40]}'
