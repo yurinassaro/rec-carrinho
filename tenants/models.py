@@ -54,6 +54,25 @@ class Empresa(models.Model):
         ('enterprise', 'Enterprise'),
     ], default='basic')
 
+    # Módulos liberados no painel (front lê via /api/me/). Chaves genéricas
+    # (ex: 'instagram', 'whatsapp_mapeamento', 'whatsapp_ia') OU exclusivas de
+    # cliente (ex: 'tarragona_x', 'neuraxo_y'). O servidor manda; o front só mostra.
+    modulos = models.JSONField(
+        default=list, blank=True,
+        verbose_name='Módulos liberados',
+        help_text="Lista de chaves de módulo, ex: ['instagram','whatsapp_mapeamento']",
+    )
+
+    # Assinatura / pagamento (Asaas)
+    assinatura_ativa = models.BooleanField(
+        default=False,
+        verbose_name='Assinatura ativa',
+        help_text='Ligado quando o pagamento é confirmado (webhook Asaas).',
+    )
+    asaas_customer_id = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    asaas_subscription_id = models.CharField(max_length=64, blank=True, default='')
+    assinatura_expira = models.DateTimeField(null=True, blank=True)
+
     # Credenciais WooCommerce - SSH
     woo_ssh_host = models.CharField(
         max_length=200,
@@ -172,10 +191,24 @@ class Empresa(models.Model):
         verbose_name='W-API Instância',
         help_text='ID da instância W-API. Deixe vazio para usar o padrão do sistema.'
     )
+    neuraxo_agent_key = models.CharField(
+        max_length=80,
+        blank=True,
+        default='',
+        verbose_name='Chave do Agente (neuraxo-agent)',
+        help_text='X-Api-Key do agente desta empresa no neuraxo-agent. Se preenchida '
+                  '(e NEURAXO_AGENT_URL setada), o Copiloto usa o agente em vez do Claude.'
+    )
     wapi_ativo = models.BooleanField(
         default=True,
         verbose_name='WhatsApp Ativo',
         help_text='Ativar/desativar envio automático de WhatsApp'
+    )
+    wapi_telefone_monitoramento = models.CharField(
+        max_length=20,
+        blank=True,
+        verbose_name='Telefone Monitoramento',
+        help_text='Numero para receber alertas de status da W-API (ex: 5516999999999). 3x ao dia: 08h, 14h, 20h.'
     )
 
     # Ativo/inativo por tipo de mensagem
@@ -303,6 +336,23 @@ class Empresa(models.Model):
         max_length=50, blank=True, verbose_name='ID Situação Cancelado',
         help_text='ID da situação "Cancelado" no Bling (varia por conta)'
     )
+    bling_logistica_id = models.CharField(
+        max_length=50, blank=True, verbose_name='ID Logística (Objetos de postagem)',
+        help_text='ID da logística no Bling para listar objetos "Aguardando retirada" '
+                  '(veja na URL integracoes_logisticas.php?logisticId=...)'
+    )
+    msg_whatsapp_aguardando_retirada = models.TextField(
+        blank=True,
+        verbose_name='Mensagem Aguardando Retirada',
+        help_text='Variáveis: {nome}, {pedido}, {codigo}, {link}',
+        default=(
+            'Olá {nome}! 📦 Seu pedido #{pedido} já chegou e está *disponível para '
+            'retirada* na agência dos Correios.\n\n'
+            'Código de rastreio: *{codigo}*\n'
+            'Acompanhe aqui: {link}\n\n'
+            'Não esqueça de levar um documento com foto. 😊'
+        ),
+    )
 
     # Meta WhatsApp Business API (Cloud API)
     meta_waba_id = models.CharField(
@@ -322,6 +372,11 @@ class Empresa(models.Model):
         verbose_name='Template Em Transito',
         help_text='Nome do template aprovado no WhatsApp Manager'
     )
+    meta_template_pedido_cadastro = models.CharField(
+        max_length=100, default='cadastro_pedido', blank=True,
+        verbose_name='Template Cadastro Pedido',
+        help_text='Template enviado quando pedido e criado no site. Params: {{1}}=nome, {{2}}=numero do pedido'
+    )
     meta_webhook_verify_token = models.CharField(
         max_length=100, blank=True,
         verbose_name='Webhook Verify Token',
@@ -331,6 +386,37 @@ class Empresa(models.Model):
         max_length=20, blank=True,
         verbose_name='WhatsApp Humano (atendimento)',
         help_text='Numero do atendente humano para encaminhar respostas (ex: 5516999999999)'
+    )
+    whatsapp_atendimento_oficial = models.CharField(
+        max_length=30, blank=True,
+        verbose_name='WhatsApp Oficial de Atendimento',
+        help_text=(
+            'Numero OFICIAL de atendimento ao cliente (onde ele deve chamar). '
+            'O numero que envia os avisos automaticos NAO atende. '
+            'Ex: (16) 99999-9999'
+        )
+    )
+    meta_resposta_automatica = models.TextField(
+        blank=True,
+        default=(
+            'Olá {nome}! Recebemos sua mensagem 🙏\n\n'
+            'ℹ️ Este número é apenas de *avisos automáticos* e não realiza '
+            'atendimento.\n\n'
+            '📦 Para consultar o status do seu pedido, acesse:\n'
+            '{consulta}\n\n'
+            '⏱️ Se o seu pedido ainda não aparecer lá, aguarde até 24 horas — '
+            'ele será sincronizado no sistema de consulta.\n\n'
+            '📞 Para falar com um atendente, chame em nosso número oficial de '
+            'atendimento: {atendimento_oficial}'
+        ),
+        verbose_name='Resposta Automatica (cliente responde)',
+        help_text=(
+            'Texto enviado automaticamente quando cliente responde uma mensagem do bot. '
+            'Deixe em branco para nao enviar. Variaveis: '
+            '{consulta} = link de consulta de pedido, {nome} = nome do cliente, '
+            '{atendimento_oficial} = numero oficial de atendimento, '
+            '{whatsapp_humano} = numero do atendente (encaminhamento interno).'
+        )
     )
     meta_template_lead_cliente = models.CharField(
         max_length=100, default='promocoes_tarragona_leads_clientes', blank=True,
@@ -419,6 +505,12 @@ class Empresa(models.Model):
     def get_full_domain(self):
         """Retorna dominio completo"""
         return f"{self.dominio}.posvendafacil.com.br"
+
+    @property
+    def link_consulta_pedido(self):
+        """Link onde o cliente consulta o proprio pedido (sistema pos-venda)."""
+        slug = self.dominio or self.slug
+        return f"https://pedidos.posvendafacil.com.br/{slug}/consultar-pedido"
 
     @property
     def has_woocommerce_api(self):
