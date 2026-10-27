@@ -844,3 +844,40 @@ class InstagramDMTemplate(models.Model):
 
     def __str__(self):
         return f'{self.empresa.nome}: {self.texto[:40]}'
+
+class RespostaRapida(models.Model):
+    """
+    Mensagem pronta do atendimento ("resposta rápida" do WhatsApp Business),
+    usada no inbox pra responder sem redigitar.
+
+    O texto fica como foi escrito pelo atendimento — inclusive com {nome}, que o
+    inbox troca na hora de inserir. A ordenação prioriza as mais usadas: a lista
+    se organiza sozinha conforme o uso real, sem ninguém ter que arrumar.
+    """
+    empresa = models.ForeignKey(
+        'tenants.Empresa',
+        on_delete=models.CASCADE,
+        related_name='respostas_rapidas',
+    )
+    titulo = models.CharField(
+        max_length=220,
+        help_text='A pergunta ou o assunto — é o que o atendente procura.',
+    )
+    texto = models.TextField(help_text='A resposta que vai pro cliente. Use {nome} pro primeiro nome.')
+    atalho = models.CharField(
+        max_length=40, blank=True, default='',
+        help_text='Opcional: palavra curta pra achar rápido (ex: rastreio).',
+    )
+    ativo = models.BooleanField(default=True)
+    usos = models.IntegerField(default=0, help_text='Quantas vezes foi inserida no inbox.')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'respostas_rapidas'
+        verbose_name = 'Resposta rápida'
+        verbose_name_plural = 'Respostas rápidas'
+        ordering = ['-usos', 'titulo']
+        indexes = [models.Index(fields=['empresa', 'ativo'])]
+
+    def __str__(self):
+        return self.titulo[:60]

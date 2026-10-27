@@ -1,4 +1,4 @@
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.utils import timezone
 from django.utils.html import format_html
 from django.urls import path
@@ -8,7 +8,7 @@ from django.views.decorators.csrf import csrf_exempt
 from import_export import resources
 from import_export.admin import ExportMixin
 from django.db.models import Count
-from .models import Customer, Cart, Order, CustomerAnalysis, Lead, MensagemWhatsApp, LeadAtacado, Pipeline, PipelineEtapa, ContatoPipeline
+from .models import Customer, Cart, Order, CustomerAnalysis, Lead, MensagemWhatsApp, LeadAtacado, Pipeline, PipelineEtapa, ContatoPipeline, InstagramDMTemplate, RespostaRapida
 from tenants.admin import TenantAdminMixin
 import json
 from datetime import datetime
@@ -57,6 +57,7 @@ class CartInline(admin.TabularInline):
 @admin.register(Customer)
 class CustomerAdmin(TenantAdminMixin, ExportMixin, admin.ModelAdmin):
     resource_class = CustomerResource
+    change_list_template = 'admin/customers/customer_changelist.html'
 
     list_display = ['email', 'full_name', 'phone_display', 'status_badge',
                    'score_display', 'total_spent_display', 'orders_display',
@@ -177,8 +178,85 @@ class CustomerAdmin(TenantAdminMixin, ExportMixin, admin.ModelAdmin):
 
     def get_queryset(self, request):
         return super().get_queryset(request).prefetch_related('carts', 'orders')
-    
-    actions = ['export_whatsapp_list', 'mark_as_contacted']
+
+    def get_urls(self):
+        custom_urls = [
+            path(
+                'export-all-meta/',
+                self.admin_site.admin_view(self.view_export_all_meta),
+                name='customers_customer_export_all_meta',
+            ),
+            path(
+                'export-all-google/',
+                self.admin_site.admin_view(self.view_export_all_google),
+                name='customers_customer_export_all_google',
+            ),
+            path(
+                'atualizar-base/',
+                self.admin_site.admin_view(self.view_atualizar_base),
+                name='customers_customer_atualizar_base',
+            ),
+        ]
+        return custom_urls + super().get_urls()
+
+    def _qs_compradores(self, request):
+        """Somente compradores (exclui nunca comprou e só abandonou carrinho)"""
+        return self.get_queryset(request).exclude(
+            status__in=['never_bought', 'abandoned_only']
+        )
+
+    def view_export_all_meta(self, request):
+        qs = self._qs_compradores(request)
+        return self.export_meta_audience(request, qs)
+
+    def view_export_all_google(self, request):
+        qs = self._qs_compradores(request)
+        return self.export_google_ads_audience(request, qs)
+
+    def view_atualizar_base(self, request):
+        """Importa pedidos a partir da data do último pedido no banco."""
+        from django.http import HttpResponseRedirect
+        from django.urls import reverse
+        from django.core.management import call_command
+        from io import StringIO
+        from datetime import timedelta
+
+        redirect_url = reverse('admin:customers_customer_changelist')
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            from tenants.models import Empresa
+            tenant = Empresa.objects.filter(ativo=True).first()
+
+        if not tenant:
+            messages.error(request, 'Nenhuma empresa configurada')
+            return HttpResponseRedirect(redirect_url)
+
+        last_order = Order.objects.filter(empresa=tenant).order_by('-created_at').first()
+        if last_order and last_order.created_at:
+            start_date = (last_order.created_at - timedelta(days=1)).strftime('%Y-%m-%d')
+        else:
+            start_date = '2025-01-01'
+
+        end_date = timezone.now().strftime('%Y-%m-%d')
+
+        try:
+            out = StringIO()
+            call_command(
+                'import_customers',
+                empresa=tenant.slug,
+                start_date=start_date,
+                end_date=end_date,
+                import_type='orders',
+                stdout=out,
+                verbosity=1,
+            )
+            messages.success(request, f'Base atualizada! Período: {start_date} a {end_date}')
+        except Exception as e:
+            messages.error(request, f'Erro ao atualizar: {e}')
+
+        return HttpResponseRedirect(redirect_url)
+
+    actions = ['export_whatsapp_list', 'export_meta_audience', 'export_google_ads_audience', 'mark_as_contacted']
     
     def export_whatsapp_list(self, request, queryset):
         """Exporta lista para WhatsApp"""
@@ -206,6 +284,106 @@ class CustomerAdmin(TenantAdminMixin, ExportMixin, admin.ModelAdmin):
         return response
     
     export_whatsapp_list.short_description = "Exportar lista WhatsApp"
+
+    def export_meta_audience(self, request, queryset):
+        """Exporta lista no formato Meta Ads (Value Based Audience)"""
+        import csv
+        import re
+        from django.http import HttpResponse
+
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="meta_audience.csv"'
+
+        writer = csv.writer(response)
+        writer.writerow(['email', 'phone', 'fn', 'ln', 'ct', 'st', 'zip', 'country', 'value'])
+
+        for c in queryset:
+            # Telefone: limpar e garantir 55
+            phone = ''
+            if c.phone:
+                phone = re.sub(r'\D', '', c.phone)
+                if phone and not phone.startswith('55'):
+                    phone = '55' + phone
+
+            # Nome / Sobrenome
+            fn = (c.first_name or '').strip()
+            ln = (c.last_name or '').strip()
+            if not fn and not ln:
+                parts = (c.email.split('@')[0]).replace('.', ' ').replace('_', ' ').split()
+                fn = parts[0] if parts else ''
+                ln = parts[1] if len(parts) > 1 else ''
+
+            # Valor = total gasto
+            value = float(c.total_spent) if c.total_spent else 0
+
+            if c.email or phone:
+                writer.writerow([
+                    c.email or '',
+                    phone,
+                    fn,
+                    ln,
+                    (c.billing_city or '').strip(),
+                    (c.billing_state or '').strip(),
+                    (c.billing_postcode or '').strip(),
+                    'BR',
+                    value,
+                ])
+
+        count = queryset.count()
+        self.message_user(request, f'{count} clientes exportados para Meta Ads')
+        return response
+    export_meta_audience.short_description = "Exportar Meta Ads (audiencia)"
+
+    def export_google_ads_audience(self, request, queryset):
+        """Exporta lista no formato Google Ads Customer Match (Contact Info)"""
+        import csv
+        import re
+        from django.http import HttpResponse
+
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="google_ads_customer_match.csv"'
+
+        writer = csv.writer(response)
+        writer.writerow(['Email', 'Phone', 'First Name', 'Last Name', 'Country', 'Zip'])
+
+        for c in queryset:
+            # Telefone: formato E.164 (+55...)
+            phone = ''
+            if c.phone:
+                phone = re.sub(r'\D', '', c.phone)
+                if phone and not phone.startswith('55'):
+                    phone = '55' + phone
+                if phone:
+                    phone = '+' + phone
+
+            # Nome / Sobrenome (lowercase conforme Google exige)
+            fn = (c.first_name or '').strip().lower()
+            ln = (c.last_name or '').strip().lower()
+            if not fn and not ln:
+                parts = (c.email.split('@')[0]).replace('.', ' ').replace('_', ' ').split()
+                fn = parts[0].lower() if parts else ''
+                ln = parts[1].lower() if len(parts) > 1 else ''
+
+            # Email lowercase
+            email = (c.email or '').strip().lower()
+
+            # Zip
+            zip_code = (c.billing_postcode or '').strip()
+
+            if email or phone:
+                writer.writerow([
+                    email,
+                    phone,
+                    fn,
+                    ln,
+                    'BR',
+                    zip_code,
+                ])
+
+        count = queryset.count()
+        self.message_user(request, f'{count} clientes exportados para Google Ads Customer Match')
+        return response
+    export_google_ads_audience.short_description = "Exportar Google Ads (Customer Match)"
 
 
 @admin.register(CustomerAnalysis)
@@ -577,8 +755,11 @@ class LeadAdmin(TenantAdminMixin, admin.ModelAdmin):
     list_filter = ['status', 'is_customer', 'numero_sapato', 'created_at']
     search_fields = ['nome', 'whatsapp']
     readonly_fields = ['is_customer', 'related_customer', 'converted_to_customer']
-    actions = ['export_leads_action']
-    
+    actions = ['export_leads_action', 'verificar_se_cliente']
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('related_customer')
+
     def whatsapp_display(self, obj):
         return obj.whatsapp or '-'
     whatsapp_display.short_description = 'WhatsApp'
@@ -628,14 +809,21 @@ class LeadAdmin(TenantAdminMixin, admin.ModelAdmin):
     status_dropdown.short_description = 'Status'
     
     def is_customer_badge(self, obj):
-        if obj.is_customer:
+        if obj.is_customer or obj.related_customer:
+            customer = obj.related_customer
+            if customer and customer.total_spent:
+                return format_html(
+                    '<span style="background: #4CAF50; color: white; padding: 3px 10px; '
+                    'border-radius: 3px;" title="Total: R$ {}">Comprador - R$ {}</span>',
+                    customer.total_spent, int(customer.total_spent)
+                )
             return format_html(
                 '<span style="background: #4CAF50; color: white; padding: 3px 10px; '
-                'border-radius: 3px;">✅ Cliente</span>'
+                'border-radius: 3px;">Comprador</span>'
             )
         return format_html(
             '<span style="background: #FF9800; color: white; padding: 3px 10px; '
-            'border-radius: 3px;">🆕 Prospect</span>'
+            'border-radius: 3px;">Prospect</span>'
         )
     is_customer_badge.short_description = 'Tipo'
     
@@ -1036,7 +1224,48 @@ class LeadAdmin(TenantAdminMixin, admin.ModelAdmin):
         # Redirecionar para página de exportação
         from django.shortcuts import redirect
         return redirect('/admin/customers/lead/export-leads/')
-    export_leads_action.short_description = "📊 Exportar leads selecionados"
+    export_leads_action.short_description = "Exportar leads selecionados"
+
+    def verificar_se_cliente(self, request, queryset):
+        """Verifica se os leads selecionados já são compradores na base de clientes."""
+        import re
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            self.message_user(request, 'Sem empresa selecionada', messages.WARNING)
+            return
+
+        atualizados = 0
+        for lead in queryset:
+            if not lead.whatsapp:
+                continue
+            phone = re.sub(r'\D', '', lead.whatsapp)
+            if len(phone) < 8:
+                continue
+            suffix = phone[-8:]
+
+            customer = Customer.objects.filter(
+                empresa=tenant,
+                phone__endswith=suffix,
+            ).first()
+
+            if customer:
+                changed = False
+                if not lead.is_customer:
+                    lead.is_customer = True
+                    changed = True
+                if lead.related_customer != customer:
+                    lead.related_customer = customer
+                    changed = True
+                if changed:
+                    lead.save(update_fields=['is_customer', 'related_customer', 'updated_at'])
+                    atualizados += 1
+
+        self.message_user(
+            request,
+            f'{atualizados} lead(s) identificados como compradores de {queryset.count()} verificados',
+            messages.SUCCESS
+        )
+    verificar_se_cliente.short_description = "Verificar se ja e comprador"
 
     class Media:
         js = ('admin/js/lead_admin.js',)
@@ -1046,18 +1275,26 @@ class LeadAdmin(TenantAdminMixin, admin.ModelAdmin):
 class MensagemWhatsAppAdmin(TenantAdminMixin, admin.ModelAdmin):
     list_display = [
         'destinatario_nome', 'destinatario_telefone', 'tipo',
-        'canal_badge', 'status_badge', 'template_name', 'created_at',
+        'canal_badge', 'status_badge', 'respondido_badge',
+        'template_name', 'created_at',
     ]
-    list_filter = ['tipo', 'canal', 'status', 'created_at']
-    search_fields = ['destinatario_nome', 'destinatario_telefone', 'template_name']
+    list_filter = ['tipo', 'canal', 'status', 'respondido', 'encaminhado_humano', 'created_at']
+    search_fields = [
+        'destinatario_nome', 'destinatario_telefone',
+        'template_name', 'resposta_texto', 'mensagem_texto',
+    ]
     readonly_fields = [
         'empresa', 'tipo', 'canal', 'status',
         'destinatario_nome', 'destinatario_telefone',
         'template_name', 'template_params', 'mensagem_texto',
         'error_message', 'api_response',
+        'meta_message_id', 'entregue_em', 'lido_em',
+        'respondido', 'respondido_em', 'resposta_texto',
+        'encaminhado_humano', 'encaminhado_humano_em',
         'lead', 'cart', 'customer', 'created_at',
     ]
     date_hierarchy = 'created_at'
+    actions = ['marcar_como_respondido']
 
     def has_add_permission(self, request):
         return False
@@ -1086,6 +1323,26 @@ class MensagemWhatsAppAdmin(TenantAdminMixin, admin.ModelAdmin):
             colors.get(obj.status, '#999'), obj.get_status_display(),
         )
     status_badge.short_description = 'Status'
+
+    def respondido_badge(self, obj):
+        if not obj.respondido:
+            return format_html('<span style="color:#999;">—</span>')
+        preview = (obj.resposta_texto or '')[:40]
+        return format_html(
+            '<span style="background:#FF9800; color:white; padding:2px 8px; '
+            'border-radius:3px; font-size:11px;" title="{}">✓ {}</span>',
+            obj.resposta_texto or 'respondido',
+            preview + ('...' if len(obj.resposta_texto or '') > 40 else ''),
+        )
+    respondido_badge.short_description = 'Respondido'
+
+    def marcar_como_respondido(self, request, queryset):
+        from django.utils import timezone
+        atualizados = queryset.filter(respondido=False).update(
+            respondido=True, respondido_em=timezone.now(),
+        )
+        self.message_user(request, f'{atualizados} mensagem(ns) marcada(s) como respondida(s).')
+    marcar_como_respondido.short_description = 'Marcar como respondido manualmente'
 
 
 @admin.register(LeadAtacado)
@@ -1417,3 +1674,25 @@ class ContatoPipelineAdmin(TenantAdminMixin, admin.ModelAdmin):
     search_fields = ['nome', 'telefone', 'email', 'empresa_contato']
     list_editable = ['etapa', 'prioridade', 'responsavel']
     raw_id_fields = ['customer']
+
+
+@admin.register(InstagramDMTemplate)
+class InstagramDMTemplateAdmin(TenantAdminMixin, admin.ModelAdmin):
+    list_display = ['empresa', 'texto', 'ativo', 'ordem']
+    list_filter = ['empresa', 'ativo']
+    list_editable = ['ativo', 'ordem']
+    search_fields = ['texto']
+
+@admin.register(RespostaRapida)
+class RespostaRapidaAdmin(TenantAdminMixin, admin.ModelAdmin):
+    """Mensagens prontas que aparecem no ⚡ do inbox."""
+    list_display = ['titulo', 'previa', 'atalho', 'usos', 'ativo']
+    list_filter = ['ativo', 'empresa']
+    search_fields = ['titulo', 'texto', 'atalho']
+    list_editable = ['ativo']
+    readonly_fields = ['usos', 'created_at']
+    fields = ['empresa', 'titulo', 'texto', 'atalho', 'ativo', 'usos', 'created_at']
+
+    @admin.display(description='Resposta')
+    def previa(self, obj):
+        return obj.texto[:90] + ('…' if len(obj.texto) > 90 else '')

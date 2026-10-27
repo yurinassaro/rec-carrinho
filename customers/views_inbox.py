@@ -12,8 +12,8 @@ from django.core.cache import cache
 from django.http import JsonResponse
 from django.views.decorators.http import require_POST
 from django.utils import timezone
-from django.db.models import Max, Count, Q
-from customers.models import MensagemWhatsApp
+from django.db.models import F, Max, Count, Q
+from customers.models import MensagemWhatsApp, RespostaRapida
 from bling.meta_whatsapp import MetaWhatsAppClient
 
 logger = logging.getLogger(__name__)
@@ -389,6 +389,42 @@ def inbox_fechar(request):
 
     baixadas = _marcar_atendida(tenant, _variantes_na_base(tenant, telefone))
     return JsonResponse({'success': True, 'baixadas': baixadas})
+
+
+@login_required
+def inbox_respostas_api(request):
+    """
+    Mensagens rápidas da empresa. Vai a lista inteira de uma vez e a busca
+    acontece no navegador: são poucas centenas e assim o atendente filtra
+    enquanto digita, sem esperar o servidor a cada tecla.
+    """
+    tenant = getattr(request, 'tenant', None)
+    if not tenant:
+        return JsonResponse({'respostas': []})
+
+    respostas = [
+        {'id': r.id, 'titulo': r.titulo, 'texto': r.texto, 'atalho': r.atalho}
+        for r in RespostaRapida.objects.filter(empresa=tenant, ativo=True)
+    ]
+    return JsonResponse({'respostas': respostas})
+
+
+@login_required
+@require_POST
+def inbox_resposta_usada(request):
+    """Conta o uso pra as mais usadas subirem sozinhas na lista."""
+    tenant = getattr(request, 'tenant', None)
+    try:
+        resposta_id = int(request.POST.get('id') or 0)
+    except (TypeError, ValueError):
+        resposta_id = 0
+    if not tenant or not resposta_id:
+        return JsonResponse({'success': False}, status=400)
+
+    RespostaRapida.objects.filter(id=resposta_id, empresa=tenant).update(
+        usos=F('usos') + 1,
+    )
+    return JsonResponse({'success': True})
 
 
 @login_required
