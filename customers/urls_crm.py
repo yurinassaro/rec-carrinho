@@ -10,6 +10,7 @@ urlpatterns = [
     path('inbox/', views_inbox.inbox_view, name='inbox'),
     path('inbox/enviar/', views_inbox.inbox_enviar, name='inbox_enviar'),
     path('inbox/midia/<int:msg_id>/', views_inbox.inbox_midia, name='inbox_midia'),
+    path('inbox/fechar/', views_inbox.inbox_fechar, name='inbox_fechar'),
     path('inbox/api/conversas/', views_inbox.inbox_conversas_api, name='inbox_conversas_api'),
     path('inbox/api/mensagens/', views_inbox.inbox_mensagens_api, name='inbox_mensagens_api'),
     path('api/mover/', views_crm.crm_mover_contato, name='mover_contato'),

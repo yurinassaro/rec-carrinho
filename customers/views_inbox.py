@@ -310,6 +310,31 @@ def _serializar_conversas(tenant, busca='', filtro='', ordem=''):
     return result, contadores
 
 
+def _variantes_na_base(tenant, telefone):
+    """Todos os formatos do mesmo telefone que existem na base do tenant."""
+    canon = _telefone_canonico(telefone)
+    tels = {telefone}
+    for variante in MensagemWhatsApp.objects.filter(
+        empresa=tenant, canal='meta',
+    ).values_list('destinatario_telefone', flat=True).distinct():
+        if _telefone_canonico(variante) == canon:
+            tels.add(variante)
+    return tels
+
+
+def _marcar_atendida(tenant, telefones):
+    """
+    Baixa o aviso da conversa inteira. O contador da sidebar conta mensagens DO
+    CLIENTE ainda sem resposta, então marcar só a última deixava o badge preso.
+    Só respondendo ou fechando a conversa — abrir para ler não baixa nada.
+    """
+    return MensagemWhatsApp.objects.filter(
+        empresa=tenant, canal='meta',
+        destinatario_telefone__in=list(telefones),
+        tipo='resposta_cliente', encaminhado_humano=False,
+    ).update(encaminhado_humano=True, encaminhado_humano_em=timezone.now())
+
+
 def _serializar_mensagem(m, texto_render):
     dt_local = timezone.localtime(m.created_at) if m.created_at else None
     return {
@@ -341,6 +366,29 @@ def inbox_midia(request, msg_id):
         mimetypes.guess_type(nome)[0] or 'application/octet-stream',
     )
     return FileResponse(msg.midia_arquivo.open('rb'), content_type=ct)
+
+
+@login_required
+@require_POST
+def inbox_fechar(request):
+    """
+    Marca a conversa como atendida sem mandar mensagem.
+
+    Existe porque muita conversa se resolve só de ler (cliente agradecendo,
+    mensagem repetida, alguém que já foi atendido no balcão). Sem isso o
+    atendente precisaria responder qualquer coisa só pra tirar o aviso — e abrir
+    para ler de propósito não baixa, senão a fila some sem ninguém atender.
+    """
+    tenant = getattr(request, 'tenant', None)
+    if not tenant:
+        return JsonResponse({'success': False, 'error': 'sem empresa'}, status=403)
+
+    telefone = (request.POST.get('telefone') or '').strip()
+    if not telefone:
+        return JsonResponse({'success': False, 'error': 'telefone obrigatorio'}, status=400)
+
+    baixadas = _marcar_atendida(tenant, _variantes_na_base(tenant, telefone))
+    return JsonResponse({'success': True, 'baixadas': baixadas})
 
 
 @login_required
@@ -438,6 +486,10 @@ def inbox_mensagens_api(request):
         'janela_aberta': janela_aberta,
         'janela_resta_min': int(resta_min) if janela_aberta else 0,
         'janela_resta_label': _dur_label(resta_min) if janela_aberta else '',
+        # > 0 → a conversa está em aberto: só responder ou fechar baixa o aviso.
+        'nao_respondidas': base.filter(
+            tipo='resposta_cliente', encaminhado_humano=False,
+        ).count(),
     }
 
     return JsonResponse({
@@ -520,13 +572,7 @@ def inbox_enviar(request):
         return JsonResponse({'success': False, 'error': 'envie texto ou arquivo'}, status=400)
 
     # Verifica janela 24h (cross-formato)
-    canon = _telefone_canonico(telefone)
-    todos_tels = set([telefone])
-    for variant_tel in MensagemWhatsApp.objects.filter(
-        empresa=tenant, canal='meta',
-    ).values_list('destinatario_telefone', flat=True).distinct():
-        if _telefone_canonico(variant_tel) == canon:
-            todos_tels.add(variant_tel)
+    todos_tels = _variantes_na_base(tenant, telefone)
 
     ultima_resp = MensagemWhatsApp.objects.filter(
         empresa=tenant, canal='meta', destinatario_telefone__in=list(todos_tels),
@@ -624,14 +670,7 @@ def inbox_enviar(request):
             pass  # replay no inbox é cosmético — o envio em si já foi feito
 
     if success and ultima_resp:
-        # Respondeu no inbox → a conversa inteira fica atendida (o contador da
-        # sidebar conta mensagens DO CLIENTE ainda sem resposta; antes só a
-        # última era baixada e o badge ficava preso em "4").
-        MensagemWhatsApp.objects.filter(
-            empresa=tenant, canal='meta',
-            destinatario_telefone__in=list(todos_tels),
-            tipo='resposta_cliente', encaminhado_humano=False,
-        ).update(encaminhado_humano=True, encaminhado_humano_em=timezone.now())
+        _marcar_atendida(tenant, todos_tels)
 
     return JsonResponse({
         'success': success,

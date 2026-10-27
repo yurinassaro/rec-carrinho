@@ -8,15 +8,19 @@ precisa ser contada da última mensagem DO CLIENTE (é ela que libera texto livr
 """
 from datetime import timedelta
 
-from django.test import SimpleTestCase
+from django.contrib.auth.models import User
+from django.test import Client, SimpleTestCase, TestCase
 from django.utils import timezone
 
+from customers.models import MensagemWhatsApp
 from customers.views_inbox import (
     _agrupar_conversas,
     _dur_label,
     _filtrar_ordenar_conversas,
+    _serializar_conversas,
     _telefone_canonico,
 )
+from tenants.models import Empresa, EmpresaUsuario
 
 AGORA = timezone.now()
 
@@ -184,3 +188,90 @@ class FiltroOrdemTest(SimpleTestCase):
 
     def test_filtro_desconhecido_cai_em_todas(self):
         self.assertEqual(len(self.nomes('xpto')), 3)
+
+
+class FecharConversaTest(TestCase):
+    """
+    A conversa só sai da fila respondendo ou fechando na mão. Abrir para ler NÃO
+    baixa o aviso — senão a fila esvazia sozinha e o cliente fica sem resposta.
+    """
+
+    def setUp(self):
+        self.empresa = Empresa.objects.create(
+            nome='Loja', slug='loja', ativo=True, woo_webhook_secret='s',
+        )
+        self.outra = Empresa.objects.create(
+            nome='Outra', slug='outra', ativo=True, woo_webhook_secret='s2',
+        )
+        self.user = User.objects.create_user('atendente', password='x', is_staff=True)
+        EmpresaUsuario.objects.create(empresa=self.empresa, usuario=self.user, is_default=True)
+        self.client = Client()
+        self.client.force_login(self.user)
+
+        self.tel = '5516999990001'
+        for texto in ('oi', 'alguem ai?', 'por favor'):
+            MensagemWhatsApp.objects.create(
+                empresa=self.empresa, canal='meta', tipo='resposta_cliente',
+                status='entregue', destinatario_nome='Cliente',
+                destinatario_telefone=self.tel, mensagem_texto=texto,
+                encaminhado_humano=False,
+            )
+
+    def pendentes(self, empresa=None):
+        return MensagemWhatsApp.objects.filter(
+            empresa=empresa or self.empresa, tipo='resposta_cliente',
+            encaminhado_humano=False,
+        ).count()
+
+    def test_abrir_a_conversa_nao_baixa_o_aviso(self):
+        r = self.client.get(f'/crm/inbox/api/mensagens/?tel={self.tel}')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()['conv_info']['nao_respondidas'], 3)
+        self.assertEqual(self.pendentes(), 3)
+
+    def test_fechar_baixa_a_conversa_inteira(self):
+        r = self.client.post('/crm/inbox/fechar/', {'telefone': self.tel})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()['baixadas'], 3)
+        self.assertEqual(self.pendentes(), 0)
+
+    def test_fechar_pega_o_mesmo_numero_sem_o_9(self):
+        """A Meta devolve o inbound sem o 9; fechar tem que limpar as duas formas."""
+        MensagemWhatsApp.objects.create(
+            empresa=self.empresa, canal='meta', tipo='resposta_cliente',
+            status='entregue', destinatario_nome='Cliente',
+            destinatario_telefone='551699990001', mensagem_texto='e ai?',
+            encaminhado_humano=False,
+        )
+        self.client.post('/crm/inbox/fechar/', {'telefone': self.tel})
+        self.assertEqual(self.pendentes(), 0)
+
+    def test_fechar_nao_vaza_para_outra_empresa(self):
+        MensagemWhatsApp.objects.create(
+            empresa=self.outra, canal='meta', tipo='resposta_cliente',
+            status='entregue', destinatario_nome='Cliente da outra',
+            destinatario_telefone=self.tel, mensagem_texto='oi',
+            encaminhado_humano=False,
+        )
+        self.client.post('/crm/inbox/fechar/', {'telefone': self.tel})
+        self.assertEqual(self.pendentes(), 0)
+        self.assertEqual(self.pendentes(self.outra), 1)
+
+    def test_fechar_tira_a_conversa_do_filtro(self):
+        _, antes = _serializar_conversas(self.empresa, filtro='nao_respondidos')
+        self.assertEqual(antes['nao_respondidos'], 1)
+        self.client.post('/crm/inbox/fechar/', {'telefone': self.tel})
+        convs, depois = _serializar_conversas(self.empresa, filtro='nao_respondidos')
+        self.assertEqual(depois['nao_respondidos'], 0)
+        self.assertEqual(convs, [])
+
+    def test_fechar_exige_login(self):
+        self.client.logout()
+        r = self.client.post('/crm/inbox/fechar/', {'telefone': self.tel})
+        self.assertIn(r.status_code, (302, 403))
+        self.assertEqual(self.pendentes(), 3)
+
+    def test_fechar_sem_telefone_da_400(self):
+        r = self.client.post('/crm/inbox/fechar/', {})
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(self.pendentes(), 3)
