@@ -13,6 +13,12 @@
   .topbar a { color: white; text-decoration: none; font-size: 0.85rem; opacity: 0.85; }
   .topbar a:hover { opacity: 1; }
   .topbar .grow { flex: 1; }
+  /* Foto da loja: redonda como no WhatsApp. Fundo branco porque logo com fundo
+     transparente sumiria no verde da barra. */
+  .topbar .logo-empresa {
+    width: 34px; height: 34px; border-radius: 50%; object-fit: contain;
+    background: #fff; padding: 2px; flex: none;
+  }
   .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #25d366; animation: pulse 1.5s infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
@@ -189,6 +195,9 @@
 </head>
 <body>
 <div class="topbar">
+  {% if request.tenant.logo %}
+    <img class="logo-empresa" src="{{ request.tenant.logo.url }}" alt="{{ request.tenant.nome }}">
+  {% endif %}
   <h1>📨 Inbox WhatsApp</h1>
   <span style="opacity:0.7;font-size:0.85rem;">{{ request.tenant.nome }}</span>
   <span class="grow"></span>
