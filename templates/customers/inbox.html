@@ -89,6 +89,7 @@
     flex-direction: column; z-index: 20;
   }
   .rr-painel.aberto { display: flex; }
+  .rr-painel.inline .rr-topo { display: none; }  /* a busca é o próprio campo da mensagem */
   .rr-topo { padding: 10px; border-bottom: 1px solid #e9edef; display: flex; gap: 8px; align-items: center; }
   .rr-topo input { flex: 1; border: 1px solid #d1d7db; border-radius: 16px; padding: 8px 12px; font-size: 14px; outline: none; }
   .rr-topo input:focus { border-color: #25d366; }
@@ -244,6 +245,7 @@ const STATE = {
   respostas: [],      // mensagens prontas, carregadas uma vez
   rrFiltradas: [],
   rrSel: 0,
+  rrInline: false,   // true quando o painel está sendo filtrado pelo "/" do próprio campo
 };
 
 function getCookie(name) {
@@ -398,19 +400,24 @@ function primeiroNome() {
   return (!p || p === '(sem' ) ? '' : p;
 }
 
-function abrirRapidas(termoInicial) {
+function abrirRapidas(termoInicial, inline) {
+  // inline = o atendente digitou "/" na mensagem; o foco fica no campo dele,
+  // como no WhatsApp. Sem inline (botão ⚡) o painel traz a própria busca.
   const painel = document.getElementById('rrPainel');
   const busca = document.getElementById('rrBusca');
   if (!painel || !busca) return;
   painel.classList.add('aberto');
+  painel.classList.toggle('inline', !!inline);
+  STATE.rrInline = !!inline;
   busca.value = termoInicial || '';
   filtrarRapidas();
-  busca.focus();
+  if (!inline) busca.focus();
 }
 
 function fecharRapidas() {
   const painel = document.getElementById('rrPainel');
-  if (painel) painel.classList.remove('aberto');
+  if (painel) painel.classList.remove('aberto', 'inline');
+  STATE.rrInline = false;
   const inp = document.getElementById('msgInput');
   if (inp) inp.focus();
 }
@@ -418,11 +425,28 @@ function fecharRapidas() {
 function filtrarRapidas() {
   const termo = (document.getElementById('rrBusca').value || '').toLowerCase().trim();
   const palavras = termo.split(/\s+/).filter(Boolean);
-  STATE.rrFiltradas = STATE.respostas.filter(r => {
+  const casam = STATE.respostas.filter(r => {
     if (!palavras.length) return true;
     const alvo = (r.titulo + ' ' + r.texto + ' ' + (r.atalho || '')).toLowerCase();
     return palavras.every(p => alvo.includes(p));  // todas as palavras, em qualquer ordem
-  }).slice(0, 60);
+  });
+
+  // "/pix" tem que trazer o pix no topo, não uma mensagem que cita pix no meio
+  // do texto — senão o Enter manda a errada. Atalho e título mandam na ordem.
+  const peso = r => {
+    const atalho = (r.atalho || '').toLowerCase();
+    const titulo = (r.titulo || '').toLowerCase();
+    if (atalho === termo || titulo === termo) return 0;
+    if (atalho.startsWith(termo) || titulo.startsWith(termo)) return 1;
+    if (atalho.includes(termo) || titulo.includes(termo)) return 2;
+    return 3;  // só o corpo da mensagem casou
+  };
+  STATE.rrFiltradas = (termo
+    ? casam.map((r, i) => ({ r, i }))
+           .sort((a, b) => peso(a.r) - peso(b.r) || a.i - b.i)  // empate: ordem do servidor
+           .map(x => x.r)
+    : casam
+  ).slice(0, 60);
   STATE.rrSel = 0;
   renderRapidas();
 }
@@ -677,7 +701,7 @@ function renderChat() {
         <button id="btnAudio" type="button" title="Gravar audio">🎤</button>
         <button id="btnRapidas" type="button" title="Mensagens rápidas (ou digite / na mensagem)">⚡</button>
         <button id="btnIA" type="button" title="Sugerir resposta com a IA — você revisa antes de enviar">🧠</button>
-        <textarea id="msgInput" placeholder="Digite sua mensagem... (/ abre as mensagens prontas)" rows="1"></textarea>
+        <textarea id="msgInput" placeholder="Digite sua mensagem... (/pix busca as prontas)" rows="1"></textarea>
         <button id="btnEnviar" class="send" title="Enviar">➤</button>
       </div>
     </div>
@@ -815,13 +839,36 @@ function attachChatListeners() {
   const inp = document.getElementById('msgInput');
   if (inp) {
     inp.addEventListener('keydown', e => {
-      // "/" no começo do campo vazio abre as prontas, como no WhatsApp Business.
-      if (e.key === '/' && !inp.value.trim()) { e.preventDefault(); abrirRapidas(''); return; }
+      // Com o "/" aberto, as setas e o Enter pertencem à lista, não ao envio.
+      if (STATE.rrInline) {
+        if (e.key === 'ArrowDown') { e.preventDefault(); moverSelecaoRapidas(1); return; }
+        if (e.key === 'ArrowUp') { e.preventDefault(); moverSelecaoRapidas(-1); return; }
+        if (e.key === 'Escape') { e.preventDefault(); fecharRapidas(); return; }
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          inserirResposta(STATE.rrFiltradas[STATE.rrSel]);
+          return;
+        }
+      }
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviarMensagem(); }
     });
     inp.addEventListener('input', () => {
       inp.style.height = 'auto';
       inp.style.height = Math.min(inp.scrollHeight, 120) + 'px';
+      // Igual ao WhatsApp Business: "/pix" digitado na mensagem vai filtrando
+      // as prontas ao vivo, sem tirar o foco de onde o atendente está escrevendo.
+      if (inp.value.startsWith('/')) {
+        const termo = inp.value.slice(1);
+        if (!STATE.rrInline) {
+          abrirRapidas(termo, true);
+        } else {
+          const busca = document.getElementById('rrBusca');
+          if (busca) busca.value = termo;
+          filtrarRapidas();
+        }
+      } else if (STATE.rrInline) {
+        fecharRapidas();  // apagou a barra: volta a ser uma mensagem normal
+      }
     });
   }
   const loadBtn = document.getElementById('loadMoreBtn');
