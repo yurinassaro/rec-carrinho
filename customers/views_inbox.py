@@ -826,9 +826,13 @@ def inbox_enviar(request):
     if success and ultima_resp:
         _marcar_atendida(tenant, todos_tels)
 
+    # Devolve a mensagem já pronta pra tela. Sem isso o navegador precisava de um
+    # SEGUNDO request só pra buscar o que acabou de mandar — e cada ida e volta
+    # daqui até o atendente custa ~200ms.
     return JsonResponse({
         'success': success,
         'error': resultado.get('error', ''),
         'wamid': wamid,
         'tipo': midia_tipo or 'text',
+        'mensagem': _serializar_mensagem(msg, msg.mensagem_texto) if success else None,
     })

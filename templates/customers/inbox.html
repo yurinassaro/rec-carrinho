@@ -100,7 +100,13 @@
   .rr-item-titulo { font-size: 13px; font-weight: 600; color: #111b21; }
   .rr-item-texto { font-size: 12px; color: #667781; margin-top: 3px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .rr-vazio { padding: 18px; text-align: center; color: #667781; font-size: 13px; }
-  .rr-dica { font-size: 11px; color: #8696a0; padding: 7px 14px; background: #f8f9fa; border-top: 1px solid #e9edef; }
+  .rr-dica {
+    font-size: 11px; color: #8696a0; padding: 7px 14px; background: #f8f9fa;
+    border-top: 1px solid #e9edef; display: flex; gap: 10px; align-items: center;
+    justify-content: space-between;
+  }
+  .rr-dica a { color: #027eb5; font-weight: 600; text-decoration: none; white-space: nowrap; }
+  .rr-dica a:hover { text-decoration: underline; }
 
   /* Aviso da IA: de onde veio a sugestão e o quanto ela confia. O atendente
      precisa saber que aquilo é sugestão, não resposta oficial da loja. */
@@ -127,6 +133,8 @@
   .bubble { max-width: 65%; padding: 8px 12px; border-radius: 8px; font-size: 14px; position: relative; word-wrap: break-word; box-shadow: 0 1px 0.5px rgba(0,0,0,0.13); }
   .msg.in .bubble { background: white; border-top-left-radius: 0; }
   .msg.out .bubble { background: #d9fdd3; border-top-right-radius: 0; }
+  /* Enquanto o servidor não confirma, a bolha fica um tom apagada (igual ao zap). */
+  .msg.out.pendente .bubble { opacity: 0.65; }
   .bubble .body { white-space: pre-wrap; line-height: 1.4; color: #111b21; }
   .bubble .meta { font-size: 11px; color: #667781; text-align: right; margin-top: 4px; display: flex; align-items: center; gap: 4px; justify-content: flex-end; }
   .bubble .tag { display: inline-block; font-size: 10px; background: #ffe5a5; color: #6c4a00; padding: 1px 6px; border-radius: 4px; margin-bottom: 4px; }
@@ -693,7 +701,11 @@ function renderChat() {
           <button class="rr-fechar" id="rrFechar" title="Fechar">✕</button>
         </div>
         <div class="rr-lista" id="rrLista"></div>
-        <div class="rr-dica">↑ ↓ para escolher · Enter insere · Esc fecha</div>
+        <div class="rr-dica">
+          <span>↑ ↓ para escolher · Enter insere · Esc fecha</span>
+          <a href="{% url 'admin:customers_respostarapida_changelist' %}" target="_blank" rel="noopener"
+             title="Abre a página das mensagens prontas: criar, corrigir o texto ou desativar">✏️ Editar as prontas</a>
+        </div>
       </div>
       <div class="composer">
         <label for="fileInput" title="Anexar arquivo">📎</label>
@@ -798,8 +810,9 @@ function renderMsgHtml(m) {
     m.status === 'lido' ? '<span class="status-icon status-lido">✓✓</span>' :
     m.status === 'entregue' ? '<span class="status-icon">✓✓</span>' :
     m.status === 'enviado' ? '<span class="status-icon">✓</span>' :
+    m.status === 'enviando' ? '<span class="status-icon" title="Enviando…">🕗</span>' :
     m.status === 'falha' ? '<span class="status-icon" style="color:#e53935;">✗ falha</span>' : '';
-  return `<div class="msg out" data-id="${m.id}"><div class="bubble">
+  return `<div class="msg out${m.pendente ? ' pendente' : ''}" data-id="${m.id}"><div class="bubble">
     ${tags.join('<br>')}${tags.length ? '<br>' : ''}
     ${citacaoHtml(m)}
     ${corpoMsgHtml(m)}
@@ -991,24 +1004,87 @@ async function toggleRecord() {
   } catch (e) { alert('Erro ao acessar microfone: ' + e.message); }
 }
 
+// A bolha que aparece ANTES do servidor responder, igual ao WhatsApp. O servidor
+// fica a ~200ms de distância e a Meta a mais 115ms: esperar tudo isso pra só
+// então desenhar deixava quase 1s de campo travado a cada mensagem.
+function bolhaPendente(texto, arquivo) {
+  const d = new Date();
+  const dois = n => ('0' + n).slice(-2);
+  let marcado = texto;
+  if (arquivo) {
+    const t = arquivo.type || '';
+    const tipo = t.startsWith('image/') ? 'image' : t.startsWith('audio/') ? 'audio'
+               : t.startsWith('video/') ? 'video' : 'document';
+    marcado = (`[${tipo}] ` + texto).trim();
+  }
+  const resp = STATE.respondendo;
+  return {
+    id: -Date.now(),            // negativo = ainda não existe no banco
+    pendente: true,
+    is_inbound: false,
+    tipo: 'atendimento_humano',
+    texto: marcado,
+    template_name: '',
+    status: 'enviando',
+    created_at_iso: d.toISOString(),
+    created_at_label: `${dois(d.getDate())}/${dois(d.getMonth() + 1)} ${dois(d.getHours())}:${dois(d.getMinutes())}`,
+    midia_url: '',
+    midia_estado: 'baixando',
+    citada: resp ? {
+      id: resp.id,
+      autor: resp.is_inbound ? 'cliente' : 'loja',
+      trecho: (resp.texto || resp.template_name || 'mensagem').slice(0, 90),
+    } : null,
+  };
+}
+
+// Troca a bolha pendente pela mensagem real (ou marca a falha) sem redesenhar a
+// tela toda — redesenhar aqui tiraria o foco de quem já está escrevendo a próxima.
+function trocarBolha(pendente, real) {
+  const i = STATE.mensagens.findIndex(m => m.id === pendente.id);
+  const el = document.querySelector(`.msg[data-id="${pendente.id}"]`);
+  if (i < 0) { if (el) el.remove(); return; }
+
+  // O polling de 3s pode ter trazido a mesma mensagem no meio do caminho.
+  if (real && STATE.mensagens.some(m => m.id === real.id)) {
+    STATE.mensagens.splice(i, 1);
+    if (el) el.remove();
+    return;
+  }
+  const novo = real || { ...pendente, pendente: false, status: 'falha' };
+  STATE.mensagens[i] = novo;
+  if (el) el.outerHTML = renderMsgHtml(novo);
+}
+
 async function enviarMensagem() {
   const inp = document.getElementById('msgInput');
   const btn = document.getElementById('btnEnviar');
   const texto = inp.value.trim();
   if (!texto && !STATE.arquivoAtual && !STATE.audioBlob) return;
 
-  btn.disabled = true;
-  btn.textContent = '…';
+  const arquivo = STATE.arquivoAtual || STATE.audioBlob || null;
+  const respondendoId = STATE.respondendo ? STATE.respondendo.id : '';
+  const pendente = bolhaPendente(texto, arquivo);
+
+  // Tela limpa NA HORA: a bolha entra, o campo esvazia, o cursor fica onde está.
+  STATE.mensagens.push(pendente);
+  const msgsEl = document.getElementById('messagesEl');
+  if (msgsEl) msgsEl.insertAdjacentHTML('beforeend', renderMsgHtml(pendente));
+  inp.value = '';
+  inp.style.height = 'auto';
+  limparArquivo();
+  cancelarResposta();
+  scrollToBottom();
+  inp.focus();
 
   try {
     let r;
-    if (STATE.arquivoAtual || STATE.audioBlob) {
+    if (arquivo) {
       const fd = new FormData();
       fd.append('telefone', STATE.telSelecionado);
       fd.append('texto', texto);
-      if (STATE.arquivoAtual) fd.append('arquivo', STATE.arquivoAtual);
-      else fd.append('arquivo', STATE.audioBlob, 'audio.webm');
-      if (STATE.respondendo) fd.append('responder_msg_id', STATE.respondendo.id);
+      fd.append('arquivo', arquivo, arquivo.name || 'audio.webm');
+      if (respondendoId) fd.append('responder_msg_id', respondendoId);
       r = await fetch('/crm/inbox/enviar/', {
         method: 'POST',
         headers: { 'X-CSRFToken': getCookie('csrftoken') },
@@ -1020,38 +1096,36 @@ async function enviarMensagem() {
         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
         body: JSON.stringify({
           telefone: STATE.telSelecionado, texto: texto,
-          responder_msg_id: STATE.respondendo ? STATE.respondendo.id : '',
+          responder_msg_id: respondendoId,
         }),
       });
     }
     const data = await r.json();
     if (data.success) {
-      inp.value = '';
-      inp.style.height = 'auto';
-      limparArquivo();
-      cancelarResposta();
-      // Buscar somente novas msgs (polling tick imediato)
-      await pollNovasMensagens();
+      trocarBolha(pendente, data.mensagem || null);
       scrollToBottom();
-      fetchConversas();
-      // Cursor de volta no campo pra emendar a próxima mensagem sem pegar o mouse.
-      // Precisa ser aqui: o re-render acima troca o elemento do compositor.
-      const novoInput = document.getElementById('msgInput');
-      if (novoInput) novoInput.focus();
+      fetchConversas();   // a lateral pode esperar: não segura o envio
     } else {
+      trocarBolha(pendente, null);
+      // O texto volta pro campo: ninguém reescreve uma mensagem perdida.
+      if (texto && !inp.value) { inp.value = texto; inp.focus(); }
       alert('Erro: ' + (data.error || 'desconhecido'));
     }
-  } catch (e) { alert('Erro de rede: ' + e.message); }
-  finally {
-    btn.disabled = false;
-    btn.textContent = '➤';
+  } catch (e) {
+    trocarBolha(pendente, null);
+    if (texto && !inp.value) { inp.value = texto; inp.focus(); }
+    alert('Erro de rede: ' + e.message);
   }
 }
 
 // ============ POLLING ============
 async function pollNovasMensagens() {
   if (!STATE.telSelecionado || !STATE.mensagens.length) return;
-  const lastId = STATE.mensagens[STATE.mensagens.length - 1].id;
+  // A bolha otimista tem id negativo (ainda não existe no banco) — quem manda no
+  // "a partir de qual id" é a última mensagem que o servidor já conhece.
+  const salvas = STATE.mensagens.filter(m => m.id > 0);
+  if (!salvas.length) return;
+  const lastId = salvas[salvas.length - 1].id;
   const data = await fetchMensagens({ after_id: lastId });
   if (data && data.mensagens && data.mensagens.length) {
     // re-render so novas msgs (preservando scroll perto do bottom)
@@ -1072,7 +1146,7 @@ async function atualizarMidiasPendentes() {
   // Só as que ainda podem chegar. Sem isso o inbox ficava pedindo pra sempre a
   // mídia de mensagens antigas que a Meta já apagou.
   const pendentes = STATE.mensagens.filter(
-    m => !m.midia_url && m.midia_estado === 'baixando' && RE_MIDIA_PENDENTE.test(m.texto || '')
+    m => m.id > 0 && !m.midia_url && m.midia_estado === 'baixando' && RE_MIDIA_PENDENTE.test(m.texto || '')
   );
   if (!pendentes.length) return;
   const ids = pendentes.slice(-20).map(m => m.id).join(',');
