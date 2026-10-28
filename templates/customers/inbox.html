@@ -352,6 +352,10 @@ async function selecionarConversa(tel) {
   if (STATE.telSelecionado === tel) return;
   STATE.telSelecionado = tel;
   STATE.respondendo = null;  // citação não atravessa conversa
+  // Nem o rascunho: o renderChat preserva o que está escrito, e sem limpar aqui
+  // o texto da conversa anterior apareceria no campo da nova.
+  const inpAnterior = document.getElementById('msgInput');
+  if (inpAnterior) inpAnterior.value = '';
   STATE.mensagens = [];
   STATE.temMaisHistorico = false;
   renderConversas();
@@ -579,8 +583,48 @@ async function fetchMensagens(opts={}) {
   } catch (e) { console.error('Erro fetch mensagens:', e); }
 }
 
+// renderChat() refaz o HTML inteiro do painel, e isso destrói o compositor.
+// Como o polling redesenha a cada mensagem nova, sem guardar o estado o
+// atendente perderia o que está digitando no meio de uma frase.
+function salvarCompositor() {
+  const inp = document.getElementById('msgInput');
+  const aviso = document.getElementById('iaAviso');
+  if (!inp) return null;
+  return {
+    texto: inp.value,
+    selIni: inp.selectionStart,
+    selFim: inp.selectionEnd,
+    focado: document.activeElement === inp,
+    avisoHtml: aviso ? aviso.innerHTML : '',
+    avisoClasse: aviso ? aviso.className : '',
+  };
+}
+
+function restaurarCompositor(salvo) {
+  if (!salvo) return;
+  const inp = document.getElementById('msgInput');
+  if (inp) {
+    inp.value = salvo.texto;
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(inp.scrollHeight, 120) + 'px';
+    if (salvo.focado) {
+      inp.focus();
+      try { inp.setSelectionRange(salvo.selIni, salvo.selFim); } catch (e) { /* campo vazio */ }
+    }
+  }
+  const aviso = document.getElementById('iaAviso');
+  if (aviso && salvo.avisoHtml) {
+    aviso.innerHTML = salvo.avisoHtml;
+    aviso.className = salvo.avisoClasse;
+  }
+  // A barra de citação também some no re-render, mas STATE.respondendo continua
+  // valendo — sem isso a resposta sairia citada sem o atendente estar vendo.
+  if (STATE.respondendo) responderMensagem(STATE.respondendo.id);
+}
+
 function renderChat() {
   const pane = document.getElementById('chatPane');
+  const compositor = salvarCompositor();
   if (!STATE.telSelecionado || !STATE.convInfo) {
     pane.innerHTML = '<div class="chat-empty"><div style="text-align:center;"><div style="font-size:64px;margin-bottom:16px;">💬</div><div>Selecione uma conversa</div></div></div>';
     return;
@@ -646,6 +690,7 @@ function renderChat() {
     ${composerHtml}
   `;
   attachChatListeners();
+  restaurarCompositor(compositor);
 }
 
 function corpoMsgHtml(m) {
@@ -923,6 +968,10 @@ async function enviarMensagem() {
       await pollNovasMensagens();
       scrollToBottom();
       fetchConversas();
+      // Cursor de volta no campo pra emendar a próxima mensagem sem pegar o mouse.
+      // Precisa ser aqui: o re-render acima troca o elemento do compositor.
+      const novoInput = document.getElementById('msgInput');
+      if (novoInput) novoInput.focus();
     } else {
       alert('Erro: ' + (data.error || 'desconhecido'));
     }
