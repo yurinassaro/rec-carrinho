@@ -1,3 +1,4 @@
+import hashlib
 from django.contrib import admin, messages
 from django.contrib.auth.models import User
 from django.utils.html import format_html
@@ -102,7 +103,7 @@ class EmpresaAdmin(admin.ModelAdmin):
     list_display = ['nome', 'slug', 'dominio', 'plano', 'ativo', 'has_woo_config', 'created_at']
     list_filter = ['ativo', 'plano']
     search_fields = ['nome', 'slug', 'dominio']
-    readonly_fields = ['created_at', 'updated_at', 'painel_acoes']
+    readonly_fields = ['created_at', 'updated_at', 'painel_acoes', 'chrome_api_key_display']
     inlines = [InstanciaWAPIInline, EmpresaUsuarioInline]
 
     def get_prepopulated_fields(self, request, obj=None):
@@ -126,7 +127,8 @@ class EmpresaAdmin(admin.ModelAdmin):
     # Fieldsets completos para superusers
     fieldsets_superuser = (
         ('Identificacao', {
-            'fields': ('nome', 'slug', 'dominio', 'ativo', 'plano')
+            'fields': ('nome', 'slug', 'dominio', 'ativo', 'plano', 'logo'),
+            'description': 'A logo aparece na barra de cima do inbox.'
         }),
         ('Acoes', {
             'fields': ('painel_acoes',),
@@ -158,7 +160,7 @@ class EmpresaAdmin(admin.ModelAdmin):
             'description': 'Configure os nomes dos campos (meta_keys) do Form Vibes para esta empresa'
         }),
         ('W-API WhatsApp', {
-            'fields': ('wapi_ativo', 'wapi_token', 'wapi_instance'),
+            'fields': ('wapi_ativo', 'wapi_token', 'wapi_instance', 'wapi_telefone_monitoramento'),
             'description': 'Credenciais da W-API (w-api.app) para envio automático. Cada empresa tem suas próprias credenciais.'
         }),
         ('Mensagens WhatsApp', {
@@ -179,14 +181,16 @@ class EmpresaAdmin(admin.ModelAdmin):
             'fields': ('bling_client_id', 'bling_client_secret',
                         'bling_situacao_processando_id', 'bling_situacao_embalado_id',
                         'bling_situacao_transito_id', 'bling_situacao_concluido_id',
-                        'bling_situacao_cancelado_id', 'bling_status_display'),
+                        'bling_situacao_cancelado_id', 'bling_status_display',
+                        'bling_logistica_id', 'msg_whatsapp_aguardando_retirada'),
             'classes': ('collapse',),
             'description': 'Credenciais Bling API V3. Configure os IDs das situações (use --list-situacoes para descobrir). Após configurar, acesse /bling/authorize/{slug}/ para autorizar.'
         }),
         ('Meta WhatsApp Business API', {
             'fields': ('meta_waba_id', 'meta_phone_number_id', 'meta_access_token',
                         'meta_template_transito', 'meta_webhook_verify_token',
-                        'meta_whatsapp_humano'),
+                        'meta_whatsapp_humano',
+                        'whatsapp_atendimento_oficial', 'meta_resposta_automatica'),
             'description': 'Cloud API oficial do WhatsApp (Meta). Templates precisam ser aprovados no WhatsApp Manager.'
         }),
         ('Meta Templates - Promocoes e Cupons', {
@@ -198,8 +202,12 @@ class EmpresaAdmin(admin.ModelAdmin):
             ),
             'description': 'Templates Meta para envio diario de promocoes (leads do dia anterior e carrinhos abandonados). Cron roda as 10h.'
         }),
+        ('Extensao Chrome - CRM WhatsApp', {
+            'fields': ('chrome_api_key_display',),
+            'description': 'Credenciais para configurar a extensão Chrome do WhatsApp Web → CRM.'
+        }),
         ('Personalizacao', {
-            'fields': ('timezone', 'logo', 'cor_primaria'),
+            'fields': ('timezone', 'cor_primaria'),
             'classes': ('collapse',),
         }),
         ('Datas', {
@@ -211,8 +219,8 @@ class EmpresaAdmin(admin.ModelAdmin):
     # Fieldsets limitados para usuarios normais
     fieldsets_user = (
         ('Informacoes da Empresa', {
-            'fields': ('nome',),
-            'description': 'Informacoes basicas da sua empresa'
+            'fields': ('nome', 'logo'),
+            'description': 'Informacoes basicas da sua empresa. A foto aparece na barra de cima do inbox — use a mesma do perfil do WhatsApp (quadrada, a partir de 200x200).'
         }),
         ('Acoes', {
             'fields': ('painel_acoes',),
@@ -248,14 +256,16 @@ class EmpresaAdmin(admin.ModelAdmin):
             'fields': ('bling_client_id', 'bling_client_secret',
                         'bling_situacao_processando_id', 'bling_situacao_embalado_id',
                         'bling_situacao_transito_id', 'bling_situacao_concluido_id',
-                        'bling_situacao_cancelado_id', 'bling_status_display'),
+                        'bling_situacao_cancelado_id', 'bling_status_display',
+                        'bling_logistica_id', 'msg_whatsapp_aguardando_retirada'),
             'classes': ('collapse',),
             'description': 'Credenciais Bling API V3. Configure os IDs das situações (use --list-situacoes para descobrir). Após configurar, acesse /bling/authorize/{slug}/ para autorizar.'
         }),
         ('Meta WhatsApp Business API', {
             'fields': ('meta_waba_id', 'meta_phone_number_id', 'meta_access_token',
                         'meta_template_transito', 'meta_webhook_verify_token',
-                        'meta_whatsapp_humano'),
+                        'meta_whatsapp_humano',
+                        'whatsapp_atendimento_oficial', 'meta_resposta_automatica'),
             'description': 'Cloud API oficial do WhatsApp (Meta). Templates precisam ser aprovados no WhatsApp Manager.'
         }),
         ('Meta Templates - Promocoes e Cupons', {
@@ -266,6 +276,10 @@ class EmpresaAdmin(admin.ModelAdmin):
                 'meta_cupom_codigo', 'meta_cupom_desconto', 'meta_cupom_validade',
             ),
             'description': 'Templates Meta para envio diario de promocoes (leads do dia anterior e carrinhos abandonados). Cron roda as 10h.'
+        }),
+        ('Extensao Chrome - CRM WhatsApp', {
+            'fields': ('chrome_api_key_display',),
+            'description': 'Credenciais para configurar a extensão Chrome do WhatsApp Web → CRM.'
         }),
     )
 
@@ -278,9 +292,9 @@ class EmpresaAdmin(admin.ModelAdmin):
     def get_readonly_fields(self, request, obj=None):
         """Usuarios normais so podem editar mensagens WhatsApp"""
         if request.user.is_superuser:
-            return ['created_at', 'updated_at', 'bling_status_display', 'painel_acoes']
+            return ['created_at', 'updated_at', 'bling_status_display', 'painel_acoes', 'chrome_api_key_display']
         # Usuarios normais: nome eh readonly
-        return ['nome', 'created_at', 'updated_at', 'bling_status_display', 'painel_acoes']
+        return ['nome', 'created_at', 'updated_at', 'bling_status_display', 'painel_acoes', 'chrome_api_key_display']
 
     def painel_acoes(self, obj):
         """Botoes de acao dentro da pagina da empresa."""
@@ -290,6 +304,8 @@ class EmpresaAdmin(admin.ModelAdmin):
         sync_url = reverse('admin:tenants_empresa_sync_woo', args=[obj.pk])
         promo_url = reverse('admin:tenants_empresa_enviar_promo', args=[obj.pk])
         ssh_url = reverse('admin:tenants_empresa_import_ssh', args=[obj.pk])
+        cupom_url = reverse('admin:tenants_empresa_cupom_cliente', args=[obj.pk])
+        brevo_url = reverse('admin:tenants_empresa_exportar_brevo', args=[obj.pk])
 
         btns = '<div style="display:flex; flex-wrap:wrap; gap:8px;">'
 
@@ -333,6 +349,36 @@ class EmpresaAdmin(admin.ModelAdmin):
                 'Enviar Promocoes: configure Meta WhatsApp primeiro</span>'
             )
 
+        # Botao Verificar e enviar cupom cliente (Leads + Carrinhos)
+        if obj.meta_phone_number_id and obj.meta_access_token:
+            btns += (
+                f'<a href="{cupom_url}" class="button" '
+                f'style="background:#8e44ad; color:white; padding:6px 15px;">'
+                f'Verificar e enviar cupom (Leads + Carrinhos)</a>'
+            )
+        else:
+            btns += (
+                '<span style="color:gray;">'
+                'Cupom cliente: configure Meta WhatsApp primeiro</span>'
+            )
+
+        # Botoes Exportar Brevo (CSV p/ email marketing) — compradores e nao
+        btns += (
+            f'<a href="{brevo_url}?tipo=compradores" class="button" '
+            f'style="background:#0a66c2; color:white; padding:6px 15px;">'
+            f'Exportar Brevo: Compradores (CSV)</a>'
+        )
+        btns += (
+            f'<a href="{brevo_url}?tipo=nao-compradores" class="button" '
+            f'style="background:#5b8def; color:white; padding:6px 15px;">'
+            f'Exportar Brevo: Nao-compradores (CSV)</a>'
+        )
+        btns += (
+            f'<a href="{brevo_url}?tipo=todos" class="button" '
+            f'style="background:#34495e; color:white; padding:6px 15px;">'
+            f'Exportar Brevo: Todos (CSV)</a>'
+        )
+
         btns += '</div>'
         return format_html(btns)
     painel_acoes.short_description = 'Acoes'
@@ -355,8 +401,69 @@ class EmpresaAdmin(admin.ModelAdmin):
                 self.admin_site.admin_view(self.view_enviar_promo),
                 name='tenants_empresa_enviar_promo',
             ),
+            path(
+                '<int:empresa_id>/cupom-cliente/',
+                self.admin_site.admin_view(self.view_cupom_cliente),
+                name='tenants_empresa_cupom_cliente',
+            ),
+            path(
+                '<int:empresa_id>/cupom-cliente/iniciar/',
+                self.admin_site.admin_view(self.view_cupom_cliente_iniciar),
+                name='tenants_empresa_cupom_cliente_iniciar',
+            ),
+            path(
+                '<int:empresa_id>/cupom-cliente/progresso/',
+                self.admin_site.admin_view(self.view_cupom_cliente_progresso),
+                name='tenants_empresa_cupom_cliente_progresso',
+            ),
+            path(
+                '<int:empresa_id>/exportar-brevo/',
+                self.admin_site.admin_view(self.view_exportar_brevo),
+                name='tenants_empresa_exportar_brevo',
+            ),
         ]
         return custom_urls + super().get_urls()
+
+    def view_exportar_brevo(self, request, empresa_id):
+        """
+        Gera e baixa o CSV de contatos no formato Brevo.
+        Query params:
+          tipo=compradores | nao-compradores | todos  (default: todos)
+          sem_email=1  -> inclui quem nao tem email (default: so com email)
+          incluir_leads=1 -> inclui Leads (so faz efeito com sem_email=1)
+        """
+        from django.http import HttpResponse
+        from customers.services.exportar_brevo import coletar, gerar_csv_texto
+
+        empresa = Empresa.objects.get(pk=empresa_id)
+        tipo = request.GET.get('tipo', 'todos')
+        exige_email = request.GET.get('sem_email') != '1'
+        incluir_leads = request.GET.get('incluir_leads') == '1'
+
+        res = coletar(empresa, incluir_leads=incluir_leads, exige_email=exige_email)
+        if tipo == 'compradores':
+            linhas = res['compradores']
+        elif tipo == 'nao-compradores':
+            linhas = res['nao_compradores']
+        else:
+            linhas = res['compradores'] + res['nao_compradores']
+
+        if not linhas:
+            messages.warning(
+                request,
+                f'{empresa.nome}: nenhum contato em "{tipo}" '
+                f'{"com email" if exige_email else ""}. '
+                f'({res["sem_email_pulados"]} sem email)'
+            )
+            return HttpResponseRedirect(
+                reverse('admin:tenants_empresa_change', args=[empresa_id])
+            )
+
+        csv_texto = gerar_csv_texto(linhas)
+        resp = HttpResponse(csv_texto, content_type='text/csv; charset=utf-8')
+        nome = f'brevo_{empresa.slug}_{tipo}.csv'
+        resp['Content-Disposition'] = f'attachment; filename="{nome}"'
+        return resp
 
     def view_import_ssh(self, request, empresa_id):
         """View: import carrinhos + leads via SSH."""
@@ -467,6 +574,74 @@ class EmpresaAdmin(admin.ModelAdmin):
 
         return HttpResponseRedirect(redirect_url)
 
+    def view_cupom_cliente(self, request, empresa_id):
+        """
+        Pagina leve do cupom cliente. NAO faz verificacao no request (evita
+        timeout/502): a verificacao (preview) e o envio rodam no Celery, e a
+        barra de % acompanha via polling do endpoint /progresso/.
+        """
+        from django.template.response import TemplateResponse
+
+        empresa = Empresa.objects.get(pk=empresa_id)
+        redirect_url = reverse('admin:tenants_empresa_change', args=[empresa_id])
+
+        if not empresa.meta_phone_number_id or not empresa.meta_access_token:
+            messages.warning(request, f'{empresa.nome}: Meta WhatsApp nao configurado')
+            return HttpResponseRedirect(redirect_url)
+
+        context = {
+            **self.admin_site.each_context(request),
+            'title': f'Enviar cupom cliente - {empresa.nome}',
+            'empresa': empresa,
+            'iniciar_url': reverse('admin:tenants_empresa_cupom_cliente_iniciar', args=[empresa_id]),
+            'progresso_url': reverse('admin:tenants_empresa_cupom_cliente_progresso', args=[empresa_id]),
+            'voltar_url': redirect_url,
+        }
+        return TemplateResponse(request, 'admin/tenants/cupom_cliente.html', context)
+
+    def view_cupom_cliente_iniciar(self, request, empresa_id):
+        """
+        Dispara a task Celery (POST). ?fase=preview verifica e conta; ?fase=envio
+        verifica e envia. Datas opcionais via querystring. Retorna JSON.
+        """
+        from django.http import JsonResponse
+        from django.core.cache import cache
+        from customers.tasks import cupom_cliente_task, cupom_cache_key
+
+        if request.method != 'POST':
+            return JsonResponse({'ok': False, 'error': 'metodo invalido'}, status=405)
+
+        empresa = Empresa.objects.get(pk=empresa_id)
+        if not empresa.meta_phone_number_id or not empresa.meta_access_token:
+            return JsonResponse({'ok': False, 'error': 'Meta WhatsApp nao configurado'}, status=400)
+
+        fase = request.GET.get('fase', 'preview')
+        dry_run = fase != 'envio'
+
+        atual = cache.get(cupom_cache_key(empresa_id, fase))
+        if atual and atual.get('status') == 'running':
+            return JsonResponse({'ok': True, 'status': 'running'})
+
+        data_inicio = request.GET.get('data_inicio') or None
+        data_fim = request.GET.get('data_fim') or None
+        cupom_cliente_task.delay(
+            empresa_id, alvo='ambos', dry_run=dry_run,
+            data_inicio=data_inicio, data_fim=data_fim,
+        )
+        return JsonResponse({'ok': True, 'status': 'started', 'fase': fase})
+
+    def view_cupom_cliente_progresso(self, request, empresa_id):
+        """Retorna o progresso (%) da fase pedida (?fase=preview|envio)."""
+        from django.http import JsonResponse
+        from django.core.cache import cache
+        from customers.tasks import cupom_cache_key
+
+        fase = request.GET.get('fase', 'preview')
+        data = cache.get(cupom_cache_key(empresa_id, fase))
+        if not data:
+            return JsonResponse({'status': 'idle', 'fase': fase, 'percent': 0})
+        return JsonResponse(data)
+
     def get_queryset(self, request):
         """Usuarios normais so veem sua propria empresa"""
         qs = super().get_queryset(request)
@@ -499,6 +674,23 @@ class EmpresaAdmin(admin.ModelAdmin):
         return obj.has_woocommerce_config
     has_woo_config.boolean = True
     has_woo_config.short_description = 'WooCommerce'
+
+    def chrome_api_key_display(self, obj):
+        """Mostra a API key da extensão Chrome (calculada a partir do slug + webhook secret)."""
+        if not obj or not obj.pk:
+            return '-'
+        if not obj.woo_webhook_secret:
+            return format_html('<span style="color:gray;">Configure o woo_webhook_secret primeiro</span>')
+        api_key = hashlib.sha256(
+            f"{obj.slug}:{obj.woo_webhook_secret}".encode()
+        ).hexdigest()[:32]
+        return format_html(
+            '<code style="font-size:14px; background:#f0f0f0; padding:4px 8px; '
+            'border-radius:4px; user-select:all;">{}</code>'
+            '<br><small style="color:#666;">URL: https://leads.posvendafacil.com.br &nbsp;|&nbsp; Slug: {}</small>',
+            api_key, obj.slug
+        )
+    chrome_api_key_display.short_description = 'API Key Extensão Chrome'
 
     def bling_status_display(self, obj):
         """Mostra status da conexão Bling e link para autorizar."""
