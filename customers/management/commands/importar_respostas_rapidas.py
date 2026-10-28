@@ -57,6 +57,7 @@ class Command(BaseCommand):
                 ignoradas += 1
                 continue
             titulo = titulo[:220]
+            atalho = (item.get('atalho') or '').strip()[:40]
 
             if opts['dry_run']:
                 criadas += 1
@@ -64,14 +65,22 @@ class Command(BaseCommand):
 
             existente = RespostaRapida.objects.filter(empresa=empresa, titulo=titulo).first()
             if existente:
+                mudou = []
                 if existente.texto != texto:
                     existente.texto = texto
-                    existente.save(update_fields=['texto'])
+                    mudou.append('texto')
+                if atalho and existente.atalho != atalho:
+                    existente.atalho = atalho
+                    mudou.append('atalho')
+                if mudou:
+                    existente.save(update_fields=mudou)
                     atualizadas += 1
                 else:
                     ignoradas += 1
             else:
-                RespostaRapida.objects.create(empresa=empresa, titulo=titulo, texto=texto)
+                RespostaRapida.objects.create(
+                    empresa=empresa, titulo=titulo, texto=texto, atalho=atalho,
+                )
                 criadas += 1
 
         prefixo = '[dry-run] ' if opts['dry_run'] else ''

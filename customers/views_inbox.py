@@ -12,7 +12,7 @@ from django.core.cache import cache
 from django.http import JsonResponse
 from django.views.decorators.http import require_POST
 from django.utils import timezone
-from django.db.models import F, Max, Count, Q
+from django.db.models import F, Max, Count, Q, Case, When, IntegerField
 from customers.models import MensagemWhatsApp, RespostaRapida
 from bling.meta_whatsapp import MetaWhatsAppClient
 
@@ -423,9 +423,16 @@ def inbox_respostas_api(request):
     if not tenant:
         return JsonResponse({'respostas': []})
 
+    # As mensagens rápidas do WhatsApp Business (as que têm atalho) vêm na
+    # frente: são as que o atendimento usa de verdade. Atrás ficam as centenas
+    # da base de conhecimento, que só aparecem quando ele busca por elas.
+    queryset = RespostaRapida.objects.filter(empresa=tenant, ativo=True).annotate(
+        sem_atalho=Case(When(atalho='', then=1), default=0, output_field=IntegerField()),
+    ).order_by('sem_atalho', '-usos', 'titulo')
+
     respostas = [
         {'id': r.id, 'titulo': r.titulo, 'texto': r.texto, 'atalho': r.atalho}
-        for r in RespostaRapida.objects.filter(empresa=tenant, ativo=True)
+        for r in queryset
     ]
     return JsonResponse({'respostas': respostas})
 

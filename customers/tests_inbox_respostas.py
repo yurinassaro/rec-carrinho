@@ -66,6 +66,19 @@ class RespostasRapidasAPITest(TestCase):
         titulos = [x['titulo'] for x in self.listar()]
         self.assertEqual(titulos[0], segunda.titulo)
 
+    def test_as_do_zap_vem_antes_da_base_de_conhecimento(self):
+        """
+        A base da IA são centenas de perguntas longas; as do WhatsApp Business
+        (com atalho) são as que o atendente usa. Elas vêm primeiro mesmo sem uso.
+        """
+        self.minha.usos = 50
+        self.minha.save(update_fields=['usos'])
+        do_zap = RespostaRapida.objects.create(
+            empresa=self.empresa, titulo='pix', texto='chave', atalho='pix',
+        )
+        titulos = [x['titulo'] for x in self.listar()]
+        self.assertEqual(titulos[0], do_zap.titulo)
+
     def test_exige_login(self):
         self.client.logout()
         r = self.client.get('/crm/inbox/api/respostas/')
@@ -102,6 +115,19 @@ class ImportarRespostasRapidasTest(TestCase):
             # mesma exportação de novo: não duplica
             call_command('importar_respostas_rapidas', arquivo=arq, empresa='loja')
             self.assertEqual(RespostaRapida.objects.filter(empresa=self.empresa).count(), 2)
+
+    def test_importa_o_atalho_quando_o_json_traz(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as d:
+            arq = self.escrever(Path(d), [
+                {'titulo': 'pix', 'texto': 'chave CNPJ', 'atalho': 'pix'},
+            ])
+            call_command('importar_respostas_rapidas', arquivo=arq, empresa='loja')
+            self.assertEqual(
+                RespostaRapida.objects.get(empresa=self.empresa, titulo='pix').atalho, 'pix',
+            )
 
     def test_reimportar_atualiza_o_texto_alterado(self):
         import tempfile
