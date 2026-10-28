@@ -335,6 +335,20 @@ def _marcar_atendida(tenant, telefones):
     ).update(encaminhado_humano=True, encaminhado_humano_em=timezone.now())
 
 
+# A Meta guarda a mídia recebida por ~7 dias e o webhook baixa na hora que a
+# mensagem chega. Então: sem arquivo e mensagem recente = ainda pode estar
+# baixando; sem arquivo e mensagem velha = a Meta já apagou, não adianta esperar.
+MIDIA_JANELA_DOWNLOAD = timedelta(minutes=15)
+
+
+def _estado_midia(m):
+    if m.midia_arquivo:
+        return 'ok'
+    if m.created_at and timezone.now() - m.created_at <= MIDIA_JANELA_DOWNLOAD:
+        return 'baixando'
+    return 'perdida'
+
+
 def _serializar_mensagem(m, texto_render):
     dt_local = timezone.localtime(m.created_at) if m.created_at else None
     return {
@@ -347,6 +361,13 @@ def _serializar_mensagem(m, texto_render):
         'created_at_iso': dt_local.isoformat() if dt_local else '',
         'created_at_label': dt_local.strftime('%d/%m %H:%M') if dt_local else '',
         'midia_url': (f'/crm/inbox/midia/{m.id}/' if m.midia_arquivo else ''),
+        'midia_estado': _estado_midia(m),
+        # Trecho da mensagem citada, pra bolha mostrar o mesmo que o cliente vê.
+        'citada': ({
+            'id': m.responde_a_id,
+            'autor': 'cliente' if m.responde_a.tipo == 'resposta_cliente' else 'loja',
+            'trecho': (m.responde_a.mensagem_texto or m.responde_a.template_name or '')[:90],
+        } if m.responde_a_id and m.responde_a else None),
     }
 
 
@@ -544,7 +565,7 @@ def inbox_mensagens_api(request):
 
     base = MensagemWhatsApp.objects.filter(
         empresa=tenant, canal='meta', destinatario_telefone__in=list(todos_tels),
-    )
+    ).select_related('responde_a')  # a bolha mostra o trecho citado — sem isso, 1 query por mensagem
 
     ids = request.GET.get('ids')
     if ids:
@@ -665,6 +686,7 @@ def inbox_enviar(request):
         telefone = (request.POST.get('telefone') or '').strip()
         texto = (request.POST.get('texto') or '').strip()
         arquivo = request.FILES.get('arquivo')
+        responder_msg_id = (request.POST.get('responder_msg_id') or '').strip()
     else:
         try:
             data = json.loads(request.body)
@@ -673,6 +695,7 @@ def inbox_enviar(request):
         telefone = (data.get('telefone') or '').strip()
         texto = (data.get('texto') or '').strip()
         arquivo = None
+        responder_msg_id = str(data.get('responder_msg_id') or '').strip()
 
     if not telefone:
         return JsonResponse({'success': False, 'error': 'telefone obrigatorio'}, status=400)
@@ -692,6 +715,20 @@ def inbox_enviar(request):
             'success': False,
             'error': 'Janela de 24h fechada. Cliente precisa responder antes de enviar mensagem livre.'
         }, status=400)
+
+    # Citar a mensagem do cliente (vira "reply" no WhatsApp dele). Só aceita uma
+    # mensagem desta conversa e deste tenant — o wamid não vem do cliente à toa.
+    responder_a = ''
+    citada = None
+    if responder_msg_id:
+        try:
+            citada = MensagemWhatsApp.objects.filter(
+                id=int(responder_msg_id), empresa=tenant, canal='meta',
+                destinatario_telefone__in=list(todos_tels),
+            ).first()
+        except (TypeError, ValueError):
+            citada = None
+        responder_a = (citada.meta_message_id or '') if citada else ''
 
     # Cliente Meta
     client = MetaWhatsAppClient(
@@ -737,9 +774,10 @@ def inbox_enviar(request):
         if not upload.get('success'):
             return JsonResponse({'success': False, 'error': f"Erro upload: {upload.get('error')}"}, status=500)
         media_id = upload.get('media_id', '')
-        resultado = client.enviar_midia(telefone, midia_tipo, media_id, caption=texto or None)
+        resultado = client.enviar_midia(telefone, midia_tipo, media_id,
+                                        caption=texto or None, responder_a=responder_a)
     else:
-        resultado = client.enviar_texto(telefone, texto)
+        resultado = client.enviar_texto(telefone, texto, responder_a=responder_a)
 
     success = resultado.get('success', False)
     response_data = resultado.get('response', {}) if success else {}
@@ -766,6 +804,7 @@ def inbox_enviar(request):
         meta_message_id=wamid,
         api_response=response_data,
         error_message=resultado.get('error', '') if not success else '',
+        responde_a=citada if responder_a else None,
     )
 
     # Guarda a mídia enviada (áudio/imagem) pra tocar/ver no próprio inbox

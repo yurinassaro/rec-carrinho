@@ -58,6 +58,28 @@
   .chat-header .nome { font-weight: 500; color: #111b21; }
   .chat-header .tel { font-size: 12px; color: #667781; }
   .chat-header .badge { font-size: 11px; padding: 4px 10px; border-radius: 12px; }
+  /* Citação: mesma barrinha verde do WhatsApp, na bolha e no compositor. */
+  .citacao { border-left: 3px solid #25d366; background: rgba(0,0,0,0.04); border-radius: 5px; padding: 5px 8px; margin-bottom: 5px; }
+  .citacao-autor { font-size: 11px; font-weight: 600; color: #0b7a3e; }
+  .citacao-txt { font-size: 12px; color: #667781; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Fica AO LADO da bolha, não em cima: dentro dela tapava o texto curto. */
+  .msg.in { align-items: center; }
+  .btn-responder {
+    visibility: hidden; flex: none; margin-left: 8px; align-self: center;
+    background: #f0f2f5; border: 1px solid #d1d7db; border-radius: 10px;
+    font-size: 10px; color: #54656f; padding: 3px 7px; cursor: pointer; white-space: nowrap;
+  }
+  .msg:hover .btn-responder { visibility: visible; }
+  .btn-responder:hover { background: #25d366; color: white; border-color: #25d366; }
+  /* Sem hover no celular: o botão fica sempre visível. */
+  @media (hover: none) { .btn-responder { visibility: visible; } }
+
+  .resp-barra { display: none; align-items: center; gap: 10px; padding: 8px 16px; background: #f0f2f5; border-top: 1px solid #d1d7db; }
+  .resp-barra.on { display: flex; }
+  .resp-barra .citacao { flex: 1; margin: 0; min-width: 0; }
+  .resp-cancelar { background: none; border: none; font-size: 18px; color: #54656f; cursor: pointer; flex: none; }
+
   /* Mensagens rápidas: painel que sobe do compositor, com busca. */
   .rr-wrap { position: relative; }
   .rr-painel {
@@ -217,6 +239,7 @@ const STATE = {
   mediaRecorder: null,
   audioChunks: [],
   previewUrl: null,
+  respondendo: null,  // mensagem sendo citada na resposta
   respostas: [],      // mensagens prontas, carregadas uma vez
   rrFiltradas: [],
   rrSel: 0,
@@ -328,6 +351,7 @@ async function selecionarConversa(tel) {
   document.querySelector('.container').classList.add('vendo-chat');
   if (STATE.telSelecionado === tel) return;
   STATE.telSelecionado = tel;
+  STATE.respondendo = null;  // citação não atravessa conversa
   STATE.mensagens = [];
   STATE.temMaisHistorico = false;
   renderConversas();
@@ -424,6 +448,31 @@ function inserirResposta(r) {
   fetch('/crm/inbox/api/respostas/usada/', {
     method: 'POST', headers: { 'X-CSRFToken': getCookie('csrftoken') }, body: fd,
   }).catch(() => {});  // contador é cosmético, não pode atrapalhar o atendimento
+}
+
+// ============ RESPONDER CITANDO ============
+function responderMensagem(msgId) {
+  const m = STATE.mensagens.find(x => x.id === msgId);
+  if (!m) return;
+  STATE.respondendo = m;
+  const barra = document.getElementById('respBarra');
+  if (!barra) return;
+  document.getElementById('respAutor').textContent = m.is_inbound ? 'Cliente' : 'Você';
+  // Mídia não tem texto pra citar: mostra o rótulo em vez de um trecho vazio.
+  const rot = { '[image]': '🖼️ Foto', '[audio]': '🎤 Áudio', '[video]': '🎬 Vídeo', '[document]': '📄 Documento' };
+  const chave = Object.keys(rot).find(k => (m.texto || '').startsWith(k));
+  document.getElementById('respTrecho').textContent =
+    chave ? (rot[chave] + ' ' + (m.texto.slice(chave.length).trim())).trim()
+          : (m.texto || m.template_name || 'mensagem');
+  barra.classList.add('on');
+  const inp = document.getElementById('msgInput');
+  if (inp) inp.focus();
+}
+
+function cancelarResposta() {
+  STATE.respondendo = null;
+  const barra = document.getElementById('respBarra');
+  if (barra) barra.classList.remove('on');
 }
 
 // ============ SUGESTÃO DA IA ============
@@ -547,6 +596,10 @@ function renderChat() {
   const composerHtml = STATE.janelaAberta ? `
     <div class="rr-wrap">
       <div class="ia-aviso" id="iaAviso"></div>
+      <div class="resp-barra" id="respBarra">
+        <div class="citacao"><div class="citacao-autor" id="respAutor"></div><div class="citacao-txt" id="respTrecho"></div></div>
+        <button class="resp-cancelar" id="respCancelar" title="Cancelar resposta">✕</button>
+      </div>
       <div class="rr-painel" id="rrPainel">
         <div class="rr-topo">
           <input type="search" id="rrBusca" placeholder="Buscar mensagem pronta..." autocomplete="off">
@@ -616,23 +669,38 @@ function corpoMsgHtml(m) {
     const legenda = t.replace('[document]', '').trim();
     return `<a href="${m.midia_url}" target="_blank" style="color:#027eb5;font-weight:600">📄 ${escapeHtml(legenda || 'Abrir documento')}</a>`;
   }
-  // mídia ainda sendo baixada da Meta (ou antiga, que a Meta já apagou)
   const pend = t.match(/^\[(audio|image|video|document)\]/);
   if (pend) {
     const rotulo = { audio: '🎤 Áudio', image: '🖼️ Foto', video: '🎬 Vídeo', document: '📄 Documento' }[pend[1]];
     const legenda = t.slice(pend[0].length).trim();
-    return `<div class="body" style="color:#667781">${rotulo} <span style="font-size:11px">— carregando…</span></div>` +
+    // 'perdida' = a Meta já apagou (ela guarda ~7 dias) ou a mensagem é anterior
+    // ao download automático. Dizer "carregando…" aqui seria mentira: nunca chega.
+    const aviso = m.midia_estado === 'perdida'
+      ? `<span style="font-size:11px" title="A Meta guarda a mídia recebida por cerca de 7 dias. Esta mensagem é mais antiga que isso, ou chegou antes de o download automático existir — o arquivo não dá mais para recuperar.">— não disponível</span>`
+      : `<span style="font-size:11px">— carregando…</span>`;
+    return `<div class="body" style="color:#667781">${rotulo} ${aviso}</div>` +
       (legenda ? `<div class="body">${escapeHtml(legenda)}</div>` : '');
   }
   return `<div class="body">${escapeHtml(t || '(sem texto)')}</div>`;
 }
 
+// Trecho citado dentro da bolha — o mesmo que o cliente vê no WhatsApp dele.
+function citacaoHtml(m) {
+  if (!m.citada) return '';
+  const quem = m.citada.autor === 'cliente' ? 'Cliente' : 'Você';
+  return `<div class="citacao"><div class="citacao-autor">${quem}</div>`
+    + `<div class="citacao-txt">${escapeHtml(m.citada.trecho || 'mensagem')}</div></div>`;
+}
+
 function renderMsgHtml(m) {
   if (m.is_inbound) {
     return `<div class="msg in" data-id="${m.id}"><div class="bubble">
+      ${citacaoHtml(m)}
       ${corpoMsgHtml(m)}
       <div class="meta">${m.created_at_label}</div>
-    </div></div>`;
+    </div>
+    <button class="btn-responder" data-responder="${m.id}" title="Responder citando esta mensagem">↩ Responder</button>
+    </div>`;
   }
   const tags = [];
   if (m.tipo === 'auto_resposta') tags.push('<span class="tag auto">🤖 Auto-resposta</span>');
@@ -645,6 +713,7 @@ function renderMsgHtml(m) {
     m.status === 'falha' ? '<span class="status-icon" style="color:#e53935;">✗ falha</span>' : '';
   return `<div class="msg out" data-id="${m.id}"><div class="bubble">
     ${tags.join('<br>')}${tags.length ? '<br>' : ''}
+    ${citacaoHtml(m)}
     ${corpoMsgHtml(m)}
     <div class="meta">${m.created_at_label} ${statusIcon}</div>
   </div></div>`;
@@ -661,6 +730,11 @@ function attachChatListeners() {
   if (btnR) btnR.addEventListener('click', () => abrirRapidas(''));
   const btnIA = document.getElementById('btnIA');
   if (btnIA) btnIA.addEventListener('click', sugerirComIA);
+  const respC = document.getElementById('respCancelar');
+  if (respC) respC.addEventListener('click', cancelarResposta);
+  document.querySelectorAll('[data-responder]').forEach(b => {
+    b.addEventListener('click', () => responderMensagem(+b.dataset.responder));
+  });
   const rrF = document.getElementById('rrFechar');
   if (rrF) rrF.addEventListener('click', fecharRapidas);
   const rrB = document.getElementById('rrBusca');
@@ -823,6 +897,7 @@ async function enviarMensagem() {
       fd.append('texto', texto);
       if (STATE.arquivoAtual) fd.append('arquivo', STATE.arquivoAtual);
       else fd.append('arquivo', STATE.audioBlob, 'audio.webm');
+      if (STATE.respondendo) fd.append('responder_msg_id', STATE.respondendo.id);
       r = await fetch('/crm/inbox/enviar/', {
         method: 'POST',
         headers: { 'X-CSRFToken': getCookie('csrftoken') },
@@ -832,7 +907,10 @@ async function enviarMensagem() {
       r = await fetch('/crm/inbox/enviar/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
-        body: JSON.stringify({ telefone: STATE.telSelecionado, texto: texto }),
+        body: JSON.stringify({
+          telefone: STATE.telSelecionado, texto: texto,
+          responder_msg_id: STATE.respondendo ? STATE.respondendo.id : '',
+        }),
       });
     }
     const data = await r.json();
@@ -840,6 +918,7 @@ async function enviarMensagem() {
       inp.value = '';
       inp.style.height = 'auto';
       limparArquivo();
+      cancelarResposta();
       // Buscar somente novas msgs (polling tick imediato)
       await pollNovasMensagens();
       scrollToBottom();
@@ -875,7 +954,11 @@ async function pollNovasMensagens() {
 // já foi desenhada como "[audio]" precisa se atualizar quando o arquivo existe.
 const RE_MIDIA_PENDENTE = /^\[(audio|image|video|document)\]/;
 async function atualizarMidiasPendentes() {
-  const pendentes = STATE.mensagens.filter(m => !m.midia_url && RE_MIDIA_PENDENTE.test(m.texto || ''));
+  // Só as que ainda podem chegar. Sem isso o inbox ficava pedindo pra sempre a
+  // mídia de mensagens antigas que a Meta já apagou.
+  const pendentes = STATE.mensagens.filter(
+    m => !m.midia_url && m.midia_estado === 'baixando' && RE_MIDIA_PENDENTE.test(m.texto || '')
+  );
   if (!pendentes.length) return;
   const ids = pendentes.slice(-20).map(m => m.id).join(',');
   try {

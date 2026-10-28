@@ -6,7 +6,9 @@ rodam em SimpleTestCase — sem banco. O que elas protegem é a regra de atendim
 quem perguntou e não foi respondido não pode sumir da lista, e a janela de 24h
 precisa ser contada da última mensagem DO CLIENTE (é ela que libera texto livre).
 """
+import json
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.test import Client, SimpleTestCase, TestCase
@@ -275,3 +277,83 @@ class FecharConversaTest(TestCase):
         r = self.client.post('/crm/inbox/fechar/', {})
         self.assertEqual(r.status_code, 400)
         self.assertEqual(self.pendentes(), 3)
+
+
+class ResponderCitandoTest(TestCase):
+    """
+    Citar a mensagem do cliente = campo `context` no payload da Meta. É ele que
+    faz o WhatsApp dele mostrar a pergunta original acima da nossa resposta.
+    """
+
+    def setUp(self):
+        self.empresa = Empresa.objects.create(
+            nome='Loja', slug='loja', ativo=True, woo_webhook_secret='s',
+            meta_phone_number_id='123', meta_access_token='tok',
+        )
+        self.outra = Empresa.objects.create(
+            nome='Outra', slug='outra', ativo=True, woo_webhook_secret='s2',
+        )
+        self.user = User.objects.create_user('atendente', password='x', is_staff=True)
+        EmpresaUsuario.objects.create(empresa=self.empresa, usuario=self.user, is_default=True)
+        self.client = Client()
+        self.client.force_login(self.user)
+
+        self.tel = '5516999990001'
+        self.do_cliente = MensagemWhatsApp.objects.create(
+            empresa=self.empresa, canal='meta', tipo='resposta_cliente', status='entregue',
+            destinatario_nome='Fulano', destinatario_telefone=self.tel,
+            mensagem_texto='o sapato chegou torto', meta_message_id='wamid.CLIENTE',
+        )
+
+    def enviar(self, **extra):
+        corpo = {'telefone': self.tel, 'texto': 'vamos resolver!'}
+        corpo.update(extra)
+        with patch('customers.views_inbox.MetaWhatsAppClient') as MockClient:
+            inst = MockClient.return_value
+            inst.esta_configurado.return_value = True
+            inst.enviar_texto.return_value = {
+                'success': True, 'response': {'messages': [{'id': 'wamid.NOSSO'}]},
+            }
+            r = self.client.post(
+                '/crm/inbox/enviar/', data=json.dumps(corpo),
+                content_type='application/json',
+            )
+            return r, inst
+
+    def test_envia_o_wamid_do_cliente_pra_meta(self):
+        r, inst = self.enviar(responder_msg_id=self.do_cliente.id)
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json()['success'])
+        self.assertEqual(inst.enviar_texto.call_args.kwargs['responder_a'], 'wamid.CLIENTE')
+
+    def test_sem_citacao_nao_manda_context(self):
+        _r, inst = self.enviar()
+        self.assertFalse(inst.enviar_texto.call_args.kwargs['responder_a'])
+
+    def test_guarda_o_vinculo_pra_bolha_mostrar(self):
+        self.enviar(responder_msg_id=self.do_cliente.id)
+        enviada = MensagemWhatsApp.objects.get(meta_message_id='wamid.NOSSO')
+        self.assertEqual(enviada.responde_a_id, self.do_cliente.id)
+
+    def test_nao_cita_mensagem_de_outra_conversa(self):
+        de_outro = MensagemWhatsApp.objects.create(
+            empresa=self.empresa, canal='meta', tipo='resposta_cliente', status='entregue',
+            destinatario_nome='Outro', destinatario_telefone='5516988880002',
+            mensagem_texto='segredo', meta_message_id='wamid.OUTRA_CONVERSA',
+        )
+        _r, inst = self.enviar(responder_msg_id=de_outro.id)
+        self.assertFalse(inst.enviar_texto.call_args.kwargs['responder_a'])
+
+    def test_nao_cita_mensagem_de_outra_empresa(self):
+        da_outra = MensagemWhatsApp.objects.create(
+            empresa=self.outra, canal='meta', tipo='resposta_cliente', status='entregue',
+            destinatario_nome='Cliente', destinatario_telefone=self.tel,
+            mensagem_texto='confidencial', meta_message_id='wamid.OUTRA_EMPRESA',
+        )
+        _r, inst = self.enviar(responder_msg_id=da_outra.id)
+        self.assertFalse(inst.enviar_texto.call_args.kwargs['responder_a'])
+
+    def test_id_invalido_nao_derruba_o_envio(self):
+        r, inst = self.enviar(responder_msg_id='abc')
+        self.assertTrue(r.json()['success'])
+        self.assertFalse(inst.enviar_texto.call_args.kwargs['responder_a'])

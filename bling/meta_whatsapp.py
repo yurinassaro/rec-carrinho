@@ -97,10 +97,86 @@ class MetaWhatsAppClient:
             logger.error(f"Erro ao enviar Meta WhatsApp: {e}")
             return {'success': False, 'error': str(e)}
 
-    def enviar_texto(self, telefone, mensagem):
+    def upload_midia(self, file_obj, mime_type, filename='upload.bin'):
+        """
+        Faz upload de arquivo para Meta e retorna media_id.
+
+        Args:
+            file_obj: arquivo (bytes ou file-like)
+            mime_type: ex. 'image/jpeg', 'audio/mp3', 'audio/ogg'
+            filename: nome do arquivo
+        """
+        if not self.esta_configurado():
+            return {'success': False, 'error': 'Meta WhatsApp nao configurado'}
+
+        try:
+            response = requests.post(
+                f"{self.BASE_URL}/{self.phone_number_id}/media",
+                headers={'Authorization': f'Bearer {self.access_token}'},
+                files={'file': (filename, file_obj, mime_type)},
+                data={'messaging_product': 'whatsapp', 'type': mime_type},
+                timeout=60,
+            )
+            if response.ok:
+                data = response.json()
+                return {'success': True, 'media_id': data.get('id', ''), 'response': data}
+            error_msg = response.json().get('error', {}).get('message', response.text) if response.content else response.text
+            logger.error(f"Erro upload midia Meta {response.status_code}: {error_msg}")
+            return {'success': False, 'error': error_msg}
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Erro ao fazer upload midia Meta: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def enviar_midia(self, telefone, tipo, media_id, caption=None, responder_a=None):
+        """
+        Envia midia (image, audio, video, document) ja uploaded.
+
+        Args:
+            telefone: numero destinatario
+            tipo: 'image' | 'audio' | 'video' | 'document'
+            media_id: ID retornado por upload_midia
+            caption: legenda (so image, video e document)
+            responder_a: wamid da mensagem do cliente a citar (vira reply no app dele)
+        """
+        if not self.esta_configurado():
+            return {'success': False, 'error': 'Meta WhatsApp nao configurado'}
+
+        payload = {
+            'messaging_product': 'whatsapp',
+            'to': telefone,
+            'type': tipo,
+            tipo: {'id': media_id},
+        }
+        if caption and tipo in ('image', 'video', 'document'):
+            payload[tipo]['caption'] = caption
+        if responder_a:
+            payload['context'] = {'message_id': responder_a}
+
+        try:
+            response = requests.post(
+                f"{self.BASE_URL}/{self.phone_number_id}/messages",
+                json=payload,
+                headers=self._headers(),
+                timeout=30,
+            )
+            if response.ok:
+                logger.info(f"Meta WhatsApp {tipo} enviado para {telefone}")
+                return {'success': True, 'response': response.json()}
+            error_msg = response.json().get('error', {}).get('message', response.text) if response.content else response.text
+            logger.error(f"Erro envio midia Meta {response.status_code}: {error_msg}")
+            return {'success': False, 'error': error_msg}
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Erro ao enviar midia Meta: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def enviar_texto(self, telefone, mensagem, responder_a=None):
         """
         Envia mensagem de texto livre (apenas dentro da janela de 24h).
         Para uso fora da janela, use enviar_template().
+
+        responder_a: wamid da mensagem do cliente. Com ele, o WhatsApp dele
+        mostra a mensagem original citada em cima da resposta — o cliente vê
+        exatamente a qual das perguntas estamos respondendo.
         """
         if not self.esta_configurado():
             return {'success': False, 'error': 'Meta WhatsApp não configurado'}
@@ -111,6 +187,8 @@ class MetaWhatsAppClient:
             'type': 'text',
             'text': {'body': mensagem},
         }
+        if responder_a:
+            payload['context'] = {'message_id': responder_a}
 
         try:
             response = requests.post(

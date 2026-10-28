@@ -151,6 +151,48 @@ def _process_status_update(status_data, empresa):
         logger.error(f'Mensagem {wamid} falhou: {error_msg}')
 
 
+MIDIA_EXT = {
+    'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp',
+    'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/aac': 'aac',
+    'audio/amr': 'amr', 'video/mp4': 'mp4', 'video/3gpp': '3gp', 'application/pdf': 'pdf',
+}
+MIDIA_MAX_BYTES = 25 * 1024 * 1024
+
+
+def _salvar_midia_recebida(empresa, msg, media_id, mime_hint=''):
+    """
+    Baixa a mídia que o cliente mandou (2 passos na Meta: id → url → bytes)
+    e guarda local, pra exibir no inbox. A URL da Meta expira rápido e exige
+    o token no header, por isso copiamos em vez de linkar.
+    Falha aqui nunca quebra o webhook — a mensagem já foi registrada.
+    """
+    import requests
+    from django.core.files.base import ContentFile
+    try:
+        token = empresa.meta_access_token
+        if not token:
+            return
+        h = {'Authorization': f'Bearer {token}'}
+        info = requests.get(
+            f'https://graph.facebook.com/v21.0/{media_id}', headers=h, timeout=20,
+        ).json()
+        url = info.get('url')
+        if not url:
+            logger.warning(f'[{empresa.slug}] mídia {media_id} sem url: {info}')
+            return
+        mime = info.get('mime_type') or mime_hint or ''
+        if int(info.get('file_size') or 0) > MIDIA_MAX_BYTES:
+            return
+        blob = requests.get(url, headers=h, timeout=60).content
+        if not blob or len(blob) > MIDIA_MAX_BYTES:
+            return
+        ext = MIDIA_EXT.get(mime.split(';')[0].strip(), 'bin')
+        msg.midia_arquivo.save(f'{msg.id}.{ext}', ContentFile(blob), save=True)
+        logger.info(f'[{empresa.slug}] mídia recebida salva: msg {msg.id} ({mime}, {len(blob)}B)')
+    except Exception as e:
+        logger.warning(f'[{empresa.slug}] falha ao baixar mídia {media_id}: {e}')
+
+
 def _process_incoming_message(message, contacts, empresa):
     """
     Processa mensagem recebida de um cliente.
@@ -164,6 +206,8 @@ def _process_incoming_message(message, contacts, empresa):
 
     # Extrair texto da mensagem
     texto = ''
+    midia_id = ''
+    midia_mime = ''
     if msg_type == 'text':
         texto = message.get('text', {}).get('body', '')
     elif msg_type == 'button':
@@ -174,6 +218,19 @@ def _process_incoming_message(message, contacts, empresa):
             texto = interactive.get('button_reply', {}).get('title', '')
         elif interactive.get('type') == 'list_reply':
             texto = interactive.get('list_reply', {}).get('title', '')
+    elif msg_type in ('image', 'audio', 'video', 'document', 'sticker', 'voice'):
+        # Mídia do cliente: guarda o id pra baixar e mostrar no inbox
+        bloco = message.get(msg_type, {}) or {}
+        midia_id = bloco.get('id', '')
+        midia_mime = bloco.get('mime_type', '')
+        legenda = bloco.get('caption') or bloco.get('filename') or ''
+        rotulo = 'image' if msg_type == 'sticker' else ('audio' if msg_type == 'voice' else msg_type)
+        texto = f'[{rotulo}] {legenda}'.strip()
+    elif msg_type == 'unsupported':
+        # A Meta manda isso quando o cliente envia algo que a Cloud API não
+        # entrega (enquete, visualização única, contato, localização ao vivo…).
+        # Não há conteúdo pra buscar — só avisamos o atendente do que houve.
+        texto = '[sem suporte] O cliente enviou algo que o WhatsApp não repassa por aqui (enquete, visualização única, etc.)'
     else:
         texto = f'[{msg_type}]'
 
@@ -229,7 +286,7 @@ def _process_incoming_message(message, contacts, empresa):
         phone__endswith=from_number[-8:],
     ).first()
 
-    MensagemWhatsApp.objects.create(
+    msg_recebida = MensagemWhatsApp.objects.create(
         empresa=empresa,
         tipo='resposta_cliente',
         canal='meta',
@@ -244,8 +301,87 @@ def _process_incoming_message(message, contacts, empresa):
         cart=msg_original.cart if msg_original else None,
     )
 
+    # Baixa a mídia do cliente agora (a URL da Meta expira em ~5 min) pra
+    # aparecer no inbox como foto/áudio de verdade, não como "[image]".
+    if midia_id:
+        _salvar_midia_recebida(empresa, msg_recebida, midia_id, midia_mime)
+
+    # Resposta automatica para o cliente (dentro da janela 24h)
+    _enviar_resposta_automatica(empresa, from_number, nome)
+
     # Encaminhar para atendente humano via W-API
     _encaminhar_para_humano(empresa, from_number, nome, texto, msg_original)
+
+
+def _enviar_resposta_automatica(empresa, telefone_cliente, nome_cliente):
+    """
+    Envia resposta automatica via Meta (free-form, dentro da janela 24h).
+    Evita loop: so envia 1x a cada 24h por cliente.
+    """
+    texto = (empresa.meta_resposta_automatica or '').strip()
+    if not texto:
+        return
+
+    # Variaveis disponiveis no texto da resposta automatica:
+    #   {consulta}            -> link de consulta de pedido da empresa
+    #   {nome}                -> nome do cliente
+    #   {atendimento_oficial} -> numero oficial de atendimento ao cliente
+    #   {whatsapp_humano}     -> numero do atendente (encaminhamento interno)
+    atendimento = empresa.whatsapp_atendimento_oficial or empresa.meta_whatsapp_humano or ''
+    texto = (
+        texto
+        .replace('{consulta}', empresa.link_consulta_pedido)
+        .replace('{nome}', nome_cliente or '')
+        .replace('{atendimento_oficial}', atendimento)
+        .replace('{whatsapp_humano}', empresa.meta_whatsapp_humano or '')
+    )
+
+    janela = timezone.now() - timezone.timedelta(hours=24)
+    ja_enviado = MensagemWhatsApp.objects.filter(
+        empresa=empresa,
+        canal='meta',
+        tipo='auto_resposta',
+        destinatario_telefone=telefone_cliente,
+        created_at__gte=janela,
+    ).exists()
+    if ja_enviado:
+        return
+
+    from bling.meta_whatsapp import MetaWhatsAppClient
+    client = MetaWhatsAppClient(
+        phone_number_id=empresa.meta_phone_number_id,
+        access_token=empresa.meta_access_token,
+    )
+    if not client.esta_configurado():
+        return
+
+    resultado = client.enviar_texto(telefone_cliente, texto)
+
+    success = resultado.get('success', False)
+    response_data = resultado.get('response', {}) if success else {}
+    wamid = ''
+    if success:
+        msgs = response_data.get('messages', [])
+        if msgs:
+            wamid = msgs[0].get('id', '')
+
+    MensagemWhatsApp.objects.create(
+        empresa=empresa,
+        tipo='auto_resposta',
+        canal='meta',
+        status='enviado' if success else 'falha',
+        destinatario_nome=nome_cliente,
+        destinatario_telefone=telefone_cliente,
+        mensagem_texto=texto,
+        meta_message_id=wamid,
+        api_response=response_data,
+        error_message=resultado.get('error', '') if not success else '',
+    )
+
+    if success:
+        logger.info(f'[{empresa.slug}] Resposta automatica enviada para {telefone_cliente}')
+    else:
+        logger.error(f'[{empresa.slug}] Erro auto-resposta {telefone_cliente}: {resultado.get("error")}')
 
 
 def _encaminhar_para_humano(empresa, telefone_cliente, nome_cliente,

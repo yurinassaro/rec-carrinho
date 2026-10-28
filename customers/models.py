@@ -525,6 +525,11 @@ class MensagemWhatsApp(models.Model):
         max_length=200, blank=True, db_index=True,
         help_text='wamid retornado pela Meta API'
     )
+    responde_a = models.ForeignKey(
+        'self', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='respostas_citando',
+        help_text='Mensagem citada (o WhatsApp do cliente mostra o trecho original acima da resposta)',
+    )
 
     # Tracking de interacao (atualizado via webhook Meta)
     entregue_em = models.DateTimeField(null=True, blank=True)
