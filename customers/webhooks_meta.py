@@ -158,6 +158,50 @@ MIDIA_EXT = {
 }
 MIDIA_MAX_BYTES = 25 * 1024 * 1024
 
+# Extensões usadas por malware que se disfarça de "orçamento/proposta" no
+# WhatsApp (o clássico golpe do arquivo .js). Documento com uma dessas é
+# bloqueado: não baixamos pro servidor e o inbox mostra aviso em vez de link.
+EXT_PERIGOSAS = {
+    'js', 'jse', 'mjs', 'vbs', 'vbe', 'wsf', 'wsh', 'hta', 'bat', 'cmd',
+    'com', 'exe', 'scr', 'pif', 'cpl', 'lnk', 'ps1', 'psm1', 'msi', 'msp',
+    'reg', 'jar', 'apk', 'app', 'dmg', 'iso', 'img', 'vhd',
+}
+# Containers que escondem o payload (o arquivo real só aparece ao extrair) —
+# também bloqueados, porque é como o .js costuma chegar "empacotado".
+EXT_CONTAINER = {'zip', 'rar', '7z', 'gz', 'tgz', 'bz2', 'cab', 'arj', 'ace', 'z'}
+
+# Reforço por MIME, caso o nome venha sem extensão confiável.
+MIME_PERIGOSOS = {
+    'text/javascript', 'application/javascript', 'application/x-javascript',
+    'application/ecmascript', 'application/x-msdownload',
+    'application/x-msdos-program', 'application/x-executable',
+    'application/vnd.microsoft.portable-executable', 'application/x-sh',
+    'application/x-bat', 'application/bat', 'application/x-csh',
+    'application/java-archive', 'application/vnd.android.package-archive',
+    'application/x-apple-diskimage', 'application/x-ms-shortcut',
+}
+
+
+def _extensao_arquivo(nome):
+    nome = (nome or '').strip().lower()
+    return nome.rsplit('.', 1)[-1] if '.' in nome else ''
+
+
+def anexo_perigoso(filename, mime=''):
+    """
+    Retorna (True, rotulo) se o documento é de um tipo usado por golpe/malware
+    no WhatsApp. Confia primeiro na extensão do nome — o WhatsApp preserva o
+    filename, então é o sinal mais firme — e usa o MIME como reforço.
+    Containers (zip/rar) entram porque escondem o payload real.
+    """
+    ext = _extensao_arquivo(filename)
+    if ext in EXT_PERIGOSAS or ext in EXT_CONTAINER:
+        return True, ext
+    m = (mime or '').split(';')[0].strip().lower()
+    if m in MIME_PERIGOSOS:
+        return True, ext or m
+    return False, ext
+
 
 def _salvar_midia_recebida(empresa, msg, media_id, mime_hint=''):
     """
@@ -181,6 +225,13 @@ def _salvar_midia_recebida(empresa, msg, media_id, mime_hint=''):
             logger.warning(f'[{empresa.slug}] mídia {media_id} sem url: {info}')
             return
         mime = info.get('mime_type') or mime_hint or ''
+        # Backstop: nunca copiar executável/script pro servidor, mesmo que
+        # a checagem por extensão tenha deixado passar.
+        if (mime or '').split(';')[0].strip().lower() in MIME_PERIGOSOS:
+            logger.warning(
+                f'[{empresa.slug}] mídia {media_id} bloqueada por MIME perigoso: {mime}'
+            )
+            return
         if int(info.get('file_size') or 0) > MIDIA_MAX_BYTES:
             return
         blob = requests.get(url, headers=h, timeout=60).content
@@ -226,6 +277,20 @@ def _process_incoming_message(message, contacts, empresa):
         legenda = bloco.get('caption') or bloco.get('filename') or ''
         rotulo = 'image' if msg_type == 'sticker' else ('audio' if msg_type == 'voice' else msg_type)
         texto = f'[{rotulo}] {legenda}'.strip()
+        # Golpe do "orçamento .js" (e .bat, .exe, .zip com payload…): documento
+        # de tipo perigoso não é baixado pro servidor e vai pro inbox marcado
+        # pra exibir aviso em vez de link clicável. O atendente vê o que era,
+        # mas não tem como abrir por reflexo.
+        if msg_type == 'document':
+            nome_arq = bloco.get('filename') or legenda
+            perigoso, rotulo_ext = anexo_perigoso(nome_arq, midia_mime)
+            if perigoso:
+                midia_id = ''  # impede o download em _salvar_midia_recebida
+                texto = f'[bloqueado:{rotulo_ext}] {nome_arq}'.strip()
+                logger.warning(
+                    f'[{empresa.slug}] anexo perigoso bloqueado de {from_number}: '
+                    f'{nome_arq!r} (mime={midia_mime})'
+                )
     elif msg_type == 'unsupported':
         # A Meta manda isso quando o cliente envia algo que a Cloud API não
         # entrega (enquete, visualização única, contato, localização ao vivo…).

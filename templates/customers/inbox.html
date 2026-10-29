@@ -859,6 +859,18 @@ function renderChat() {
 
 function corpoMsgHtml(m) {
   const t = m.texto || '';
+  // Anexo perigoso (golpe do .js/.bat/.exe/.zip): nunca vira link clicável.
+  // O documento não foi baixado pro servidor — mostramos só o aviso e o nome.
+  const bloq = t.match(/^\[bloqueado:([^\]]*)\]\s*/);
+  if (bloq) {
+    const ext = (bloq[1] || '').toUpperCase();
+    const nome = t.slice(bloq[0].length).trim();
+    return `<div style="border:1px solid #e35d6a;background:#fdecee;border-radius:8px;padding:10px 12px;max-width:300px">` +
+      `<div style="color:#b02a37;font-weight:700;font-size:13px">⚠️ Anexo bloqueado por segurança</div>` +
+      `<div style="color:#842029;font-size:12px;margin-top:4px">Arquivo <b>${ext ? '.' + escapeHtml(ext) : 'de tipo perigoso'}</b> — usado em golpes para instalar vírus. <b>Não foi baixado.</b> Não peça pro cliente reenviar nem tente abrir.</div>` +
+      (nome ? `<div style="color:#667781;font-size:11px;margin-top:6px;word-break:break-all">📎 ${escapeHtml(nome)}</div>` : '') +
+    `</div>`;
+  }
   if (m.midia_url && t.startsWith('[audio]')) {
     const legenda = t.replace('[audio]', '').trim();
     return `<audio controls preload="metadata" src="${m.midia_url}" style="max-width:240px;display:block"></audio>` +
