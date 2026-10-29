@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 from django.utils.html import format_html
 from django.urls import path, reverse
 from django.http import HttpResponseRedirect
-from .models import Empresa, EmpresaUsuario, InstanciaWAPI
+from .models import Empresa, EmpresaUsuario, InstanciaWAPI, TurnoAtendente
 
 
 class TenantAdminMixin:
@@ -97,6 +97,25 @@ class EmpresaUsuarioInline(admin.TabularInline):
     autocomplete_fields = ['usuario']
 
 
+class TurnoAtendenteInline(admin.TabularInline):
+    model = TurnoAtendente
+    extra = 1
+    fields = ['nome', 'hora_inicio', 'hora_fim',
+              'seg', 'ter', 'qua', 'qui', 'sex', 'sab', 'dom', 'ativo', 'ordem']
+    verbose_name = 'Turno'
+    verbose_name_plural = 'Escala de atendimento'
+
+    # O EmpresaAdmin ja controla quem abre qual empresa.
+    def has_add_permission(self, request, obj=None):
+        return True
+
+    def has_change_permission(self, request, obj=None):
+        return True
+
+    def has_delete_permission(self, request, obj=None):
+        return True
+
+
 @admin.register(Empresa)
 class EmpresaAdmin(admin.ModelAdmin):
     """Admin para gerenciar empresas"""
@@ -104,7 +123,7 @@ class EmpresaAdmin(admin.ModelAdmin):
     list_filter = ['ativo', 'plano']
     search_fields = ['nome', 'slug', 'dominio']
     readonly_fields = ['created_at', 'updated_at', 'painel_acoes', 'chrome_api_key_display']
-    inlines = [InstanciaWAPIInline, EmpresaUsuarioInline]
+    inlines = [TurnoAtendenteInline, InstanciaWAPIInline, EmpresaUsuarioInline]
 
     def get_prepopulated_fields(self, request, obj=None):
         """Apenas superusers tem prepopulated_fields"""
@@ -131,10 +150,11 @@ class EmpresaAdmin(admin.ModelAdmin):
             'description': 'A logo aparece na barra de cima do inbox.'
         }),
         ('Quem esta atendendo', {
-            'fields': ('atendente_manha', 'atendente_tarde', 'hora_troca_atendente',
-                       'inbox_prefixo_atendente'),
-            'description': 'O nome entra sozinho nas mensagens que dizem "meu nome e ...", conforme a hora. '
-                           'E, se voce quiser, assina as mensagens do inbox com "Atendente Fulano".'
+            'fields': ('inbox_prefixo_atendente',),
+            'description': 'Quem atende em cada dia e horario vai na ESCALA DE ATENDIMENTO, '
+                           'la embaixo nesta mesma pagina. O nome entra sozinho nas mensagens '
+                           'que dizem "meu nome e ...", e quem esta na cadeira pode trocar no '
+                           'topo do inbox quando cobre um turno.'
         }),
         ('Acoes', {
             'fields': ('painel_acoes',),
@@ -229,10 +249,11 @@ class EmpresaAdmin(admin.ModelAdmin):
             'description': 'Informacoes basicas da sua empresa. A foto aparece na barra de cima do inbox — use a mesma do perfil do WhatsApp (quadrada, a partir de 200x200).'
         }),
         ('Quem esta atendendo', {
-            'fields': ('atendente_manha', 'atendente_tarde', 'hora_troca_atendente',
-                       'inbox_prefixo_atendente'),
-            'description': 'O nome entra sozinho nas mensagens que dizem "meu nome e ...", conforme a hora. '
-                           'E, se voce quiser, assina as mensagens do inbox com "Atendente Fulano".'
+            'fields': ('inbox_prefixo_atendente',),
+            'description': 'Quem atende em cada dia e horario vai na ESCALA DE ATENDIMENTO, '
+                           'la embaixo nesta mesma pagina. O nome entra sozinho nas mensagens '
+                           'que dizem "meu nome e ...", e quem esta na cadeira pode trocar no '
+                           'topo do inbox quando cobre um turno.'
         }),
         ('Acoes', {
             'fields': ('painel_acoes',),
@@ -667,8 +688,8 @@ class EmpresaAdmin(admin.ModelAdmin):
     def get_inlines(self, request, obj=None):
         """Superusers veem tudo, usuarios normais veem instancias WAPI"""
         if request.user.is_superuser:
-            return [InstanciaWAPIInline, EmpresaUsuarioInline]
-        return [InstanciaWAPIInline]
+            return [TurnoAtendenteInline, InstanciaWAPIInline, EmpresaUsuarioInline]
+        return [TurnoAtendenteInline, InstanciaWAPIInline]
 
     def formfield_for_foreignkey(self, db_field, request, **kwargs):
         """Filtra instâncias W-API para mostrar apenas as da empresa sendo editada"""

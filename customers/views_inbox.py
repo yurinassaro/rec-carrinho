@@ -125,6 +125,12 @@ def inbox_view(request):
             'modo': tenant.inbox_prefixo_atendente or '',
             'atendentes': tenant.atendentes,
             'plantao': tenant.atendente_de_plantao,
+            # {'Yasmin': 'seg a sex, 08h–15h'} — a tela mostra o horário do
+            # escolhido, pra ninguém precisar decorar a escala.
+            'escala': tenant.escala_resumida,
+            # Quem está dentro do próprio horário agora. Quem não está assina
+            # com "(plantão)" — a tela mostra isso antes de mandar.
+            'em_turno': tenant.atendentes_em_turno,
         },
     })
 
@@ -859,6 +865,11 @@ def _assinatura_atendente(tenant, nome_pedido, todos_tels):
         nome = tenant.atendente_de_plantao
     if not nome:
         return ''
+
+    # Fora do próprio horário, o nome sai com "(plantão)": avisa o cliente que
+    # ali é atendimento fora do expediente, sem parecer que a escala furou.
+    if not tenant.em_turno(nome):
+        nome = f'{nome} (plantão)'
 
     if modo == 'primeira':
         ultima_cliente = MensagemWhatsApp.objects.filter(

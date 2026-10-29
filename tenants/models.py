@@ -1,3 +1,5 @@
+from datetime import time
+
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils.text import slugify
@@ -512,22 +514,95 @@ class Empresa(models.Model):
 
     @property
     def atendente_de_plantao(self):
-        """Quem assina a mensagem agora, no fuso da própria empresa."""
+        """
+        Quem assina a mensagem agora, no fuso da própria empresa.
+
+        A escala (TurnoAtendente) manda. Fora de qualquer turno — fim de
+        semana sem escala, madrugada — devolve quem fechou o último turno,
+        porque é melhor assinar com alguém da casa do que não assinar.
+        Os campos antigos de manhã/tarde ficam de reserva pra empresa que
+        ainda não montou a escala.
+        """
         from django.utils import timezone as _tz
-        hora = _tz.localtime().hour
-        if hora < (self.hora_troca_atendente or 15):
+        agora = _tz.localtime()
+        turnos = [t for t in self.turnos.all() if t.ativo]
+        if turnos:
+            de_hoje = [t for t in turnos if t.vale_no_dia(agora.weekday())]
+            for t in de_hoje:
+                if t.contem(agora.time()):
+                    return t.nome.strip()
+            # Ninguém de plantão agora: o turno de hoje que já terminou.
+            passados = [t for t in de_hoje if t.hora_fim <= agora.time()]
+            if passados:
+                return max(passados, key=lambda t: t.hora_fim).nome.strip()
+            if de_hoje:
+                return min(de_hoje, key=lambda t: t.hora_inicio).nome.strip()
+            return turnos[0].nome.strip()
+        if self.hora_troca_atendente is None:
+            return (self.atendente_manha or self.atendente_tarde or '').strip()
+        if agora.hour < (self.hora_troca_atendente or 15):
             return (self.atendente_manha or self.atendente_tarde or '').strip()
         return (self.atendente_tarde or self.atendente_manha or '').strip()
 
     @property
     def atendentes(self):
-        """Os nomes cadastrados, na ordem do turno. Serve de lista branca: o
-        nome vai pro cliente, então não aceitamos texto solto vindo da tela."""
+        """
+        Todo mundo que pode assinar, na ordem da escala. Serve de LISTA
+        BRANCA: o nome vai pro cliente, então não aceitamos texto solto
+        vindo da tela — senão dava pra assinar como "Banco do Brasil"
+        pelo número oficial da loja.
+        """
         nomes = []
+        for t in self.turnos.all():
+            n = (t.nome or '').strip()
+            if t.ativo and n and n not in nomes:
+                nomes.append(n)
+        if nomes:
+            # Com escala montada, os campos antigos são resquício: deixá-los
+            # entrar traria nome repetido (ou de quem já saiu) pro seletor.
+            return nomes
         for n in ((self.atendente_manha or '').strip(), (self.atendente_tarde or '').strip()):
             if n and n not in nomes:
                 nomes.append(n)
         return nomes
+
+    def em_turno(self, nome):
+        """
+        A pessoa está dentro do horário dela agora?
+
+        Serve pra marcar "(plantão)" quando alguém atende fora do próprio
+        turno — o dono respondendo no domingo, a atendente cobrindo a noite.
+        Empresa sem escala montada devolve True pra todo mundo: sem horário
+        cadastrado não dá pra dizer que alguém está fora dele.
+        """
+        from django.utils import timezone as _tz
+        nome = (nome or '').strip()
+        if not nome:
+            return True
+        turnos = [t for t in self.turnos.all() if t.ativo]
+        if not turnos:
+            return True
+        agora = _tz.localtime()
+        return any(
+            t for t in turnos
+            if (t.nome or '').strip() == nome
+            and t.vale_no_dia(agora.weekday())
+            and t.contem(agora.time())
+        )
+
+    @property
+    def atendentes_em_turno(self):
+        """Quem está no horário agora — a tela usa pra mostrar o selo."""
+        return [n for n in self.atendentes if self.em_turno(n)]
+
+    @property
+    def escala_resumida(self):
+        """Pra tela: {'Yasmin': 'seg a sex, 08h–15h', ...}."""
+        fala = {}
+        for t in self.turnos.all():
+            if t.ativo and t.nome:
+                fala.setdefault(t.nome.strip(), []).append(t.descricao)
+        return {nome: ' · '.join(partes) for nome, partes in fala.items()}
 
     # Metadados
     created_at = models.DateTimeField(auto_now_add=True)
@@ -647,3 +722,95 @@ class EmpresaUsuario(models.Model):
                 is_default=True
             ).exclude(pk=self.pk).update(is_default=False)
         super().save(*args, **kwargs)
+
+
+class TurnoAtendente(models.Model):
+    """
+    Uma linha da escala: quem atende, em quais dias e em que horário.
+
+    Existe porque "manhã e tarde" não descreve a realidade da loja — no
+    sábado é outra pessoa, e às vezes é uma de duas. A escala dá o padrão;
+    quem está na cadeira troca no seletor do inbox quando cobre um turno.
+    """
+    DIAS = [
+        ('seg', 'Segunda'), ('ter', 'Terça'), ('qua', 'Quarta'),
+        ('qui', 'Quinta'), ('sex', 'Sexta'), ('sab', 'Sábado'),
+        ('dom', 'Domingo'),
+    ]
+    # Mesma ordem de datetime.weekday(): segunda = 0.
+    ORDEM_DIAS = ['seg', 'ter', 'qua', 'qui', 'sex', 'sab', 'dom']
+
+    empresa = models.ForeignKey(
+        Empresa, on_delete=models.CASCADE, related_name='turnos',
+    )
+    nome = models.CharField(
+        max_length=60, verbose_name='Atendente',
+        help_text='O nome como o cliente vê (ex: Yasmin).',
+    )
+    hora_inicio = models.TimeField(
+        default=time(8, 0), verbose_name='Começa',
+    )
+    hora_fim = models.TimeField(
+        default=time(15, 0), verbose_name='Termina',
+        help_text='O fim não conta: 08:00 às 15:00 cobre até 14:59.',
+    )
+    seg = models.BooleanField(default=True, verbose_name='Seg')
+    ter = models.BooleanField(default=True, verbose_name='Ter')
+    qua = models.BooleanField(default=True, verbose_name='Qua')
+    qui = models.BooleanField(default=True, verbose_name='Qui')
+    sex = models.BooleanField(default=True, verbose_name='Sex')
+    sab = models.BooleanField(default=False, verbose_name='Sáb')
+    dom = models.BooleanField(default=False, verbose_name='Dom')
+    ativo = models.BooleanField(
+        default=True, verbose_name='Ativo',
+        help_text='Desmarque em vez de apagar quando alguém sai de férias.',
+    )
+    ordem = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        db_table = 'tenants_turno_atendente'
+        verbose_name = 'Turno de atendimento'
+        verbose_name_plural = 'Escala de atendimento'
+        ordering = ['ordem', 'hora_inicio', 'id']
+
+    def __str__(self):
+        return f'{self.nome} — {self.descricao}'
+
+    def vale_no_dia(self, weekday):
+        """weekday no padrão do Python: segunda = 0, domingo = 6."""
+        try:
+            return bool(getattr(self, self.ORDEM_DIAS[weekday]))
+        except (IndexError, AttributeError):
+            return False
+
+    def contem(self, hora):
+        """
+        O fim é exclusivo: 08:00–15:00 cobre 08:00 até 14:59.
+        Turno que vira a noite (22:00–02:00) também funciona.
+        """
+        if self.hora_inicio <= self.hora_fim:
+            return self.hora_inicio <= hora < self.hora_fim
+        return hora >= self.hora_inicio or hora < self.hora_fim
+
+    @property
+    def dias_marcados(self):
+        return [d for d in self.ORDEM_DIAS if getattr(self, d, False)]
+
+    @property
+    def descricao(self):
+        """'seg a sex, 08h–15h' — pra mostrar na tela sem o atendente pensar."""
+        dias = self.dias_marcados
+        rotulo = dict(self.DIAS)
+        if dias == ['seg', 'ter', 'qua', 'qui', 'sex']:
+            texto_dias = 'seg a sex'
+        elif len(dias) == 7:
+            texto_dias = 'todo dia'
+        elif not dias:
+            texto_dias = 'nenhum dia'
+        else:
+            texto_dias = ', '.join(rotulo[d][:3].lower() for d in dias)
+
+        def hhmm(t):
+            return t.strftime('%Hh') if t.minute == 0 else t.strftime('%Hh%M')
+
+        return f'{texto_dias}, {hhmm(self.hora_inicio)}–{hhmm(self.hora_fim)}'
