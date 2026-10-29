@@ -18,6 +18,29 @@ from bling.meta_whatsapp import MetaWhatsAppClient
 
 logger = logging.getLogger(__name__)
 
+# Título que assina a mensagem do atendente. O asterisco é o negrito do
+# WhatsApp — vira "Atendente Yasmin" em negrito na primeira linha.
+PREFIXO_MARCA = '*Atendente '
+
+# Tipos que podem abrir dentro da página do inbox. Só o que o cliente de
+# verdade manda (foto, áudio, vídeo, nota fiscal em PDF). Nada que execute.
+# A assinatura é útil pro cliente, mas na prévia da lateral do inbox ela
+# ocuparia o lugar do conteúdo: toda conversa apareceria como "Atendente
+# Fulano" e o atendente não saberia qual é qual.
+RE_ASSINATURA = re.compile(r'\*Atendente [^*\n]{0,60}\*\s*')
+
+
+def _sem_assinatura(texto):
+    return RE_ASSINATURA.sub('', texto or '', count=1).strip()
+
+
+INLINE_SEGURO = {
+    'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+    'audio/ogg', 'audio/mpeg', 'audio/mp4', 'audio/aac', 'audio/amr',
+    'video/mp4', 'video/3gpp',
+    'application/pdf',
+}
+
 
 def _carregar_templates_meta(empresa):
     """
@@ -95,7 +118,15 @@ def inbox_view(request):
     tenant = getattr(request, 'tenant', None)
     if not tenant:
         return redirect('/tenants/select/')
-    return render(request, 'customers/inbox.html', {})
+    return render(request, 'customers/inbox.html', {
+        # Quem assina a mensagem. Vai por json_script: o nome é digitado no
+        # admin, então não entra cru no meio do JavaScript da página.
+        'assinatura_cfg': {
+            'modo': tenant.inbox_prefixo_atendente or '',
+            'atendentes': tenant.atendentes,
+            'plantao': tenant.atendente_de_plantao,
+        },
+    })
 
 
 def _telefone_canonico(phone):
@@ -189,7 +220,9 @@ def _agrupar_conversas(registros, agora):
         # depender da ordem: a "última mensagem" é sempre a de maior created_at.
         if g['ultima_em'] is None or m['created_at'] > g['ultima_em']:
             g['ultima_em'] = m['created_at']
-            g['ultima_msg'] = (m['mensagem_texto'] or m['template_name'] or '')[:80]
+            g['ultima_msg'] = _sem_assinatura(
+                m['mensagem_texto'] or m['template_name'] or ''
+            )[:80]
             g['tipo'] = m['tipo']
             g['telefone'] = m['destinatario_telefone']
         if m['tipo'] == 'resposta_cliente':
@@ -386,7 +419,15 @@ def inbox_midia(request, msg_id):
         (v for k, v in extras.items() if nome.lower().endswith(k)),
         mimetypes.guess_type(nome)[0] or 'application/octet-stream',
     )
-    return FileResponse(msg.midia_arquivo.open('rb'), content_type=ct)
+    resp = FileResponse(msg.midia_arquivo.open('rb'), content_type=ct)
+    # Lista branca do que pode abrir na própria tela. Lista branca e não negra
+    # de propósito: SVG é "imagem" e executa script, HTML idem — servidos do
+    # nosso domínio, rodariam com a sessão do atendente. Tudo que não está
+    # aqui baixa em vez de abrir.
+    if ct.split(';')[0].strip().lower() not in INLINE_SEGURO:
+        resp['Content-Disposition'] = 'attachment'
+    resp['X-Content-Type-Options'] = 'nosniff'
+    return resp
 
 
 @login_required
@@ -797,6 +838,54 @@ def _converter_audio_para_mp3(conteudo):
     return None
 
 
+def _assinatura_atendente(tenant, nome_pedido, todos_tels):
+    """
+    Monta o título "Atendente Fulano" que vai em cima da mensagem, pro cliente
+    saber com quem está falando (duas pessoas dividem o mesmo número).
+
+    Devolve '' quando a empresa não quer assinar, quando não há nome cadastrado,
+    ou — no modo 'primeira' — quando a loja já assinou nesta mesma conversa
+    desde a última vez que o cliente escreveu. Repetir o nome a cada linha de
+    uma conversa que já está em andamento só polui.
+    """
+    modo = (getattr(tenant, 'inbox_prefixo_atendente', '') or '').strip()
+    if modo not in ('sempre', 'primeira'):
+        return ''
+
+    # O nome vai para o cliente, então só aceitamos quem está cadastrado.
+    # Qualquer outra coisa vinda da tela cai no atendente de plantão.
+    nome = (nome_pedido or '').strip()
+    if nome not in tenant.atendentes:
+        nome = tenant.atendente_de_plantao
+    if not nome:
+        return ''
+
+    if modo == 'primeira':
+        ultima_cliente = MensagemWhatsApp.objects.filter(
+            empresa=tenant, canal='meta',
+            destinatario_telefone__in=list(todos_tels),
+            tipo='resposta_cliente',
+        ).order_by('-created_at').first()
+        ja_assinou = MensagemWhatsApp.objects.filter(
+            empresa=tenant, canal='meta',
+            destinatario_telefone__in=list(todos_tels),
+            tipo='atendimento_humano',
+            # Não dá pra filtrar por status='enviado': segundos depois o
+            # webhook da Meta troca pra 'entregue' e depois 'lido', e o modo
+            # 'primeira' voltaria a assinar toda mensagem.
+            status__in=['enviado', 'entregue', 'lido'],
+            # 'contains' e não 'startswith': em mídia o histórico começa com
+            # o rótulo ("[image] ...") e a assinatura vem depois, na legenda.
+            mensagem_texto__contains=PREFIXO_MARCA,
+        )
+        if ultima_cliente:
+            ja_assinou = ja_assinou.filter(created_at__gt=ultima_cliente.created_at)
+        if ja_assinou.exists():
+            return ''
+
+    return f'{PREFIXO_MARCA}{nome}*'
+
+
 @login_required
 @require_POST
 def inbox_enviar(request):
@@ -814,6 +903,7 @@ def inbox_enviar(request):
         texto = (request.POST.get('texto') or '').strip()
         arquivo = request.FILES.get('arquivo')
         responder_msg_id = (request.POST.get('responder_msg_id') or '').strip()
+        atendente_pedido = (request.POST.get('atendente') or '').strip()
     else:
         try:
             data = json.loads(request.body)
@@ -823,6 +913,7 @@ def inbox_enviar(request):
         texto = (data.get('texto') or '').strip()
         arquivo = None
         responder_msg_id = str(data.get('responder_msg_id') or '').strip()
+        atendente_pedido = (data.get('atendente') or '').strip()
 
     if not telefone:
         return JsonResponse({'success': False, 'error': 'telefone obrigatorio'}, status=400)
@@ -856,6 +947,9 @@ def inbox_enviar(request):
         except (TypeError, ValueError):
             citada = None
         responder_a = (citada.meta_message_id or '') if citada else ''
+
+    # Assina a mensagem com o nome de quem está atendendo, se a loja quiser.
+    assinatura = _assinatura_atendente(tenant, atendente_pedido, todos_tels)
 
     # Cliente Meta
     client = MetaWhatsAppClient(
@@ -901,9 +995,14 @@ def inbox_enviar(request):
         if not upload.get('success'):
             return JsonResponse({'success': False, 'error': f"Erro upload: {upload.get('error')}"}, status=500)
         media_id = upload.get('media_id', '')
+        # Áudio não aceita legenda na API da Meta — esse fica sem assinatura.
+        if assinatura and midia_tipo != 'audio':
+            texto = f'{assinatura}\n{texto}'.strip()
         resultado = client.enviar_midia(telefone, midia_tipo, media_id,
                                         caption=texto or None, responder_a=responder_a)
     else:
+        if assinatura:
+            texto = f'{assinatura}\n{texto}'
         resultado = client.enviar_texto(telefone, texto, responder_a=responder_a)
 
     success = resultado.get('success', False)

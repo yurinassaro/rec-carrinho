@@ -146,6 +146,16 @@
   .ia-aviso b { font-weight: 600; }
   #btnIA.pensando { opacity: 0.6; cursor: progress; }
 
+  /* Quem está assinando. Fica discreta em cima do campo: é informação de
+     conferência, não um controle que o atendente usa toda hora. */
+  .assina-barra { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 6px 16px; background: #f0f2f5; border-top: 1px solid #e2e5e8;
+    font-size: 12px; color: #54656f; }
+  .assina-barra select { border: 1px solid #d1d7db; border-radius: 6px; padding: 3px 8px;
+    font-size: 12px; font-weight: 600; color: #111b21; background: #fff; cursor: pointer; }
+  .assina-barra .ab-dica { color: #8696a0; }
+  @media (max-width: 820px) { .assina-barra .ab-dica { display: none; } }
+
   .btn-fechar { background: white; border: 1px solid #25d366; color: #0b7a3e; font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 14px; cursor: pointer; white-space: nowrap; }
   .btn-fechar:hover { background: #25d366; color: white; }
   .btn-fechar[disabled] { opacity: 0.6; cursor: default; }
@@ -321,7 +331,15 @@
   </div>
 </div>
 
+{{ assinatura_cfg|json_script:"assinaturaCfg" }}
 <script>
+// Quem assina as mensagens (vem do cadastro da empresa, nunca do cliente).
+const ASSINA = (() => {
+  try { return JSON.parse(document.getElementById('assinaturaCfg').textContent); }
+  catch (e) { return { modo: '', atendentes: [], plantao: '' }; }
+})();
+const ASSINA_LIGADA = !!ASSINA.modo && (ASSINA.atendentes || []).length > 0;
+
 const STATE = {
   conversas: [],
   telSelecionado: null,
@@ -358,7 +376,10 @@ function getCookie(name) {
 }
 
 function escapeHtml(s) {
-  return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // As aspas também: sem elas, texto usado dentro de um atributo
+  // (value="...", src="...") escapa do atributo e vira HTML de verdade.
+  return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // ============ CONVERSAS ============
@@ -672,6 +693,39 @@ async function sugerirComIA() {
   }
 }
 
+// Quem está assinando agora. A escala manda, mas quem está na cadeira pode
+// trocar — numa cobertura de turno a escala mente, e o cliente é quem paga
+// o preço de ver o nome errado. Fica guardado só neste navegador.
+function quemAssina() {
+  if (!ASSINA_LIGADA) return '';
+  let salvo = '';
+  try { salvo = localStorage.getItem('inboxAssinaQuem') || ''; } catch (e) {}
+  if (salvo && ASSINA.atendentes.includes(salvo)) return salvo;
+  return ASSINA.plantao || ASSINA.atendentes[0] || '';
+}
+
+function renderAssinatura() {
+  const barra = document.getElementById('assinaBarra');
+  if (!barra) return;
+  if (!ASSINA_LIGADA) { barra.style.display = 'none'; return; }
+  const atual = quemAssina();
+  const quando = ASSINA.modo === 'sempre'
+    ? 'em toda mensagem'
+    : 'na primeira mensagem da conversa';
+  barra.innerHTML =
+    `<span class="ab-rotulo">✍️ Assinando como</span>` +
+    `<select id="assinaQuem" title="Quem o cliente vê como atendente">` +
+    ASSINA.atendentes.map(n =>
+      `<option value="${escapeHtml(n)}"${n === atual ? ' selected' : ''}>${escapeHtml(n)}</option>`
+    ).join('') +
+    `</select>` +
+    `<span class="ab-dica">o cliente vê este nome ${quando}</span>`;
+  const sel = document.getElementById('assinaQuem');
+  if (sel) sel.addEventListener('change', () => {
+    try { localStorage.setItem('inboxAssinaQuem', sel.value); } catch (e) {}
+  });
+}
+
 function moverSelecaoRapidas(delta) {
   if (!STATE.rrFiltradas.length) return;
   STATE.rrSel = (STATE.rrSel + delta + STATE.rrFiltradas.length) % STATE.rrFiltradas.length;
@@ -806,6 +860,7 @@ function renderChat() {
              title="Abre a página das mensagens prontas: criar, corrigir o texto ou desativar">✏️ Editar as prontas</a>
         </div>
       </div>
+      <div class="assina-barra" id="assinaBarra"></div>
       <div class="composer">
         <label for="fileInput" title="Anexar arquivo">📎</label>
         <input type="file" id="fileInput" style="display:none;" accept="image/*,audio/*,video/*,application/pdf">
@@ -869,6 +924,20 @@ function corpoMsgHtml(m) {
       `<div style="color:#b02a37;font-weight:700;font-size:13px">⚠️ Anexo bloqueado por segurança</div>` +
       `<div style="color:#842029;font-size:12px;margin-top:4px">Arquivo <b>${ext ? '.' + escapeHtml(ext) : 'de tipo perigoso'}</b> — usado em golpes para instalar vírus. <b>Não foi baixado.</b> Não peça pro cliente reenviar nem tente abrir.</div>` +
       (nome ? `<div style="color:#667781;font-size:11px;margin-top:6px;word-break:break-all">📎 ${escapeHtml(nome)}</div>` : '') +
+    `</div>`;
+  }
+  // Tipo que o sistema não reconhece. Não é o golpe conhecido, mas também não
+  // é nada que cliente de loja costume mandar — então o atendente abre sabendo.
+  const susp = t.match(/^\[suspeito:([^\]]*)\]\s*/);
+  if (susp) {
+    const ext = (susp[1] || '').toUpperCase();
+    const nome = t.slice(susp[0].length).trim();
+    return `<div style="border:1px solid #d9a441;background:#fff8e6;border-radius:8px;padding:10px 12px;max-width:300px">` +
+      `<div style="color:#8a6100;font-weight:700;font-size:13px">⚠️ Arquivo de tipo não identificado</div>` +
+      `<div style="color:#6b4d00;font-size:12px;margin-top:4px">${ext ? 'Terminação <b>.' + escapeHtml(ext) + '</b>. ' : 'Veio sem extensão. '}` +
+      `Não é um tipo que clientes costumam mandar. <b>Só abra se você esperava este arquivo desta pessoa.</b></div>` +
+      (nome ? `<div style="color:#667781;font-size:11px;margin-top:6px;word-break:break-all">📎 ${escapeHtml(nome)}</div>` : '') +
+      (m.midia_url ? `<a href="${m.midia_url}" target="_blank" rel="noopener" style="display:inline-block;margin-top:8px;color:#8a6100;font-size:12px;font-weight:600">Baixar assim mesmo</a>` : '') +
     `</div>`;
   }
   if (m.midia_url && t.startsWith('[audio]')) {
@@ -963,6 +1032,7 @@ function acrescentarNovasMsgs() {
 function attachChatListeners() {
   // Janela fechada: o seletor de templates ocupa o lugar do compositor.
   if (document.getElementById('tplSelect')) montarTemplates();
+  renderAssinatura();
   const file = document.getElementById('fileInput');
   // Colar print funciona com o foco em qualquer lugar da conversa, não só no
   // campo: quem acabou de dar Cmd+Shift+4 não clicou em nada ainda.
@@ -1280,6 +1350,7 @@ async function enviarMensagem() {
       const ext = ((arquivo.type || '').split('/')[1] || 'webm').split(';')[0];
       fd.append('arquivo', arquivo, arquivo.name || ('audio.' + ext));
       if (respondendoId) fd.append('responder_msg_id', respondendoId);
+      if (ASSINA_LIGADA) fd.append('atendente', quemAssina());
       r = await fetch('/crm/inbox/enviar/', {
         method: 'POST',
         headers: { 'X-CSRFToken': getCookie('csrftoken') },
@@ -1292,6 +1363,7 @@ async function enviarMensagem() {
         body: JSON.stringify({
           telefone: STATE.telSelecionado, texto: texto,
           responder_msg_id: respondendoId,
+          atendente: ASSINA_LIGADA ? quemAssina() : '',
         }),
       });
     }

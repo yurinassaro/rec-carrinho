@@ -10,6 +10,8 @@ Configurar no Meta Business:
 """
 import json
 import logging
+import re
+import unicodedata
 
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -158,6 +160,10 @@ MIDIA_EXT = {
 }
 MIDIA_MAX_BYTES = 25 * 1024 * 1024
 
+# Extensão de verdade só tem letra, número e hífen. Serve pra jogar fora o
+# caractere invisível que o atacante gruda no fim pra driblar a lista.
+RE_SO_EXTENSAO = re.compile(r'[^a-z0-9-]')
+
 # Extensões usadas por malware que se disfarça de "orçamento/proposta" no
 # WhatsApp (o clássico golpe do arquivo .js). Documento com uma dessas é
 # bloqueado: não baixamos pro servidor e o inbox mostra aviso em vez de link.
@@ -165,10 +171,62 @@ EXT_PERIGOSAS = {
     'js', 'jse', 'mjs', 'vbs', 'vbe', 'wsf', 'wsh', 'hta', 'bat', 'cmd',
     'com', 'exe', 'scr', 'pif', 'cpl', 'lnk', 'ps1', 'psm1', 'msi', 'msp',
     'reg', 'jar', 'apk', 'app', 'dmg', 'iso', 'img', 'vhd',
+    # xll é DLL carregada pelo Excel; iqy e slk puxam payload remoto sozinhos.
+    # Nenhum dos três tem uso legítimo numa loja.
+    'xll', 'iqy', 'slk',
+    # Arquivos de texto que o Windows trata como ação ao abrir/visualizar.
+    'url', 'scf', 'inf', 'chm', 'msc', 'hlp', 'jnlp', 'sct', 'wsc', 'ws',
+    'vb', 'shb', 'shs', 'ins', 'isp', 'mst', 'gadget', 'appref-ms',
+    'settingcontent-ms', 'library-ms', 'diagcab',
+    # OneNote virou vetor comum.
+    'one', 'onepkg',
+    # Resto da família PowerShell e instaladores modernos.
+    'ps1xml', 'psc1', 'psd1', 'msix', 'msixbundle', 'appx', 'appxbundle',
+    # Fechando a simetria com MIME_PERIGOSOS (x-sh/x-csh/x-msdownload).
+    'sh', 'csh', 'bash', 'dll',
+}
+
+# NÃO bloqueadas — avisadas (tarja amarela, baixa só por download).
+#
+# São arma de golpe de verdade (HTML de phishing é hoje o anexo malicioso mais
+# comum; SVG executa script; Office com macro roda ao abrir). Mas também são
+# arquivo de trabalho legítimo: fornecedor manda planilha com macro, banco
+# gera comprovante em HTML, fornecedor manda arte em SVG. E bloquear aqui é
+# IRREVERSÍVEL — a mídia expira na Meta e não há como pedir de novo.
+#
+# O que tira o veneno delas: inbox_midia agora serve com
+# Content-Disposition: attachment e nosniff, então nenhuma delas executa no
+# nosso domínio com a sessão do atendente. Sobra o risco de o atendente abrir
+# no computador dele — e para isso o aviso amarelo é a resposta certa.
+EXT_AVISO = {
+    'html', 'htm', 'xhtml', 'shtml', 'mhtml', 'mht',
+    'svg', 'svgz',
+    'docm', 'dotm', 'xlsm', 'xlsb', 'xlam', 'xla', 'pptm', 'potm',
+    'ppam', 'ppsm',
+}
+MIME_AVISO = {
+    'text/html', 'application/xhtml+xml', 'image/svg+xml',
+    'application/vnd.ms-excel.sheet.macroenabled.12',
+    'application/vnd.ms-word.document.macroenabled.12',
+    'application/vnd.ms-powerpoint.presentation.macroenabled.12',
+    'application/vnd.ms-excel.addin.macroenabled.12',
+    'application/vnd.ms-excel.sheet.binary.macroenabled.12',
+}
+
+# As que NUNCA aparecem no meio de um nome legítimo. Só estas são checadas nas
+# partes do meio ("orcamento.js.pdf"). Não dá pra checar o nome inteiro contra
+# a lista toda: 'com' está lá, e "notafiscal.com.br.pdf" é nome legítimo.
+EXT_INEQUIVOCAS = {
+    'js', 'jse', 'mjs', 'vbs', 'vbe', 'wsf', 'hta', 'bat', 'cmd', 'exe',
+    'scr', 'pif', 'cpl', 'lnk', 'ps1', 'msi', 'jar', 'apk', 'dll',
+    'docm', 'dotm', 'xlsm', 'xlsb', 'xll', 'pptm', 'scf', 'chm', 'msc',
 }
 # Containers que escondem o payload (o arquivo real só aparece ao extrair) —
 # também bloqueados, porque é como o .js costuma chegar "empacotado".
-EXT_CONTAINER = {'zip', 'rar', '7z', 'gz', 'tgz', 'bz2', 'cab', 'arj', 'ace', 'z'}
+EXT_CONTAINER = {
+    'zip', 'rar', '7z', 'gz', 'tgz', 'bz2', 'cab', 'arj', 'ace', 'z',
+    'xz', 'lzh', 'lha', 'tar', 'iso', 'vhdx', 'wim', 'zipx',
+}
 
 # Reforço por MIME, caso o nome venha sem extensão confiável.
 MIME_PERIGOSOS = {
@@ -179,12 +237,49 @@ MIME_PERIGOSOS = {
     'application/x-bat', 'application/bat', 'application/x-csh',
     'application/java-archive', 'application/vnd.android.package-archive',
     'application/x-apple-diskimage', 'application/x-ms-shortcut',
+    # Containers: o backstop do download era cego pra eles.
+    'application/zip', 'application/x-zip-compressed', 'application/x-rar-compressed',
+    'application/vnd.rar', 'application/x-7z-compressed', 'application/gzip',
+    'application/x-gzip', 'application/x-tar', 'application/x-bzip2',
+    'application/x-iso9660-image', 'application/vnd.ms-cab-compressed',
+    # Resto da simetria com EXT_PERIGOSAS.
+    'application/x-msi', 'application/x-powershell', 'application/hta',
+    'application/x-vbs', 'application/x-ms-installer',
 }
+
+# DELIBERADAMENTE DE FORA — não "complete" a lista com estes:
+#   application/octet-stream → é o MIME coringa que o WhatsApp manda em
+#     documento legítimo. Bloquear por ele derruba anexo de verdade em massa.
+#     O caso dele é o aviso amarelo de "tipo não identificado", não o bloqueio.
+#   xml / text/xml → NF-e brasileira chega legitimamente como XML.
+#   pdf, docx, xlsx, pptx, odt, ods, csv, doc, xls e imagem/áudio/vídeo →
+#     é o que o cliente de uma loja manda o dia inteiro.
+
+
+def _partes_nome(nome):
+    """
+    Quebra o nome do arquivo em extensões, da última pra primeira.
+
+    Normaliza antes porque o nome é o campo que o atacante controla:
+      - o Windows ignora ponto e espaço no fim ("fatura.js." abre como .js);
+      - caractere invisível ou de direção ("fatura.js‮") não muda o que o
+        sistema operacional executa, mas driblava a comparação com a lista.
+    Por isso a extensão é reduzida a letras, números e hífen antes de comparar.
+    """
+    nome = unicodedata.normalize('NFKC', (nome or '')).strip().lower()
+    nome = nome.rstrip('. \t\r\n ​')
+    partes = []
+    for p in nome.split('.')[1:]:
+        limpo = RE_SO_EXTENSAO.sub('', p)
+        if limpo:
+            partes.append(limpo)
+    partes.reverse()
+    return partes
 
 
 def _extensao_arquivo(nome):
-    nome = (nome or '').strip().lower()
-    return nome.rsplit('.', 1)[-1] if '.' in nome else ''
+    partes = _partes_nome(nome)
+    return partes[0] if partes else ''
 
 
 def anexo_perigoso(filename, mime=''):
@@ -193,14 +288,83 @@ def anexo_perigoso(filename, mime=''):
     no WhatsApp. Confia primeiro na extensão do nome — o WhatsApp preserva o
     filename, então é o sinal mais firme — e usa o MIME como reforço.
     Containers (zip/rar) entram porque escondem o payload real.
+
+    Bloquear aqui é IRREVERSÍVEL (a mídia expira na Meta), então a dúvida
+    pende pra deixar passar e avisar — ver anexo_desconhecido().
     """
-    ext = _extensao_arquivo(filename)
+    partes = _partes_nome(filename)
+    ext = partes[0] if partes else ''
     if ext in EXT_PERIGOSAS or ext in EXT_CONTAINER:
         return True, ext
+    # Extensão dupla ("orcamento.js.pdf"): só as inequívocas, senão
+    # "notafiscal.com.br.pdf" viraria falso positivo por causa do 'com'.
+    for p in partes[1:]:
+        if p in EXT_INEQUIVOCAS:
+            return True, p
+    # Extensão explicitamente esperada manda mais que o MIME: celular Android
+    # reporta docx/xlsx como application/zip, e bloquear por isso perderia a
+    # nota fiscal do cliente pra sempre.
+    if ext in EXT_ESPERADAS:
+        return False, ext
     m = (mime or '').split(';')[0].strip().lower()
     if m in MIME_PERIGOSOS:
         return True, ext or m
     return False, ext
+
+
+# Extensões que a loja recebe de cliente o dia inteiro. O que não está aqui
+# nem na lista de perigosas é "não sei o que é" — vai pro inbox com aviso
+# amarelo em vez de link direto, porque é por aí que entra o tipo novo.
+EXT_ESPERADAS = {
+    'pdf', 'xml', 'csv', 'txt', 'rtf',
+    'doc', 'docx', 'odt', 'xls', 'xlsx', 'ods', 'ppt', 'pptx', 'odp', 'odg',
+    'jpg', 'jpeg', 'jfif', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif',
+    'tiff', 'tif',
+    'mp3', 'ogg', 'oga', 'opus', 'm4a', 'aac', 'amr', 'wav', 'flac',
+    'mp4', '3gp', '3gpp', 'mov', 'avi', 'mkv', 'webm', 'mpeg', 'm4v', 'wmv',
+    'vcf', 'ics',
+    # NF-e assinada, e-mail encaminhado, arte de fornecedor, iWork da Apple.
+    'p7s', 'eml', 'msg', 'cdr', 'ai', 'eps', 'psd',
+    'pages', 'numbers', 'key',
+}
+
+
+def anexo_desconhecido(filename, mime=''):
+    """
+    (True, ext) quando o anexo merece aviso em vez de link direto:
+
+      - é de EXT_AVISO/MIME_AVISO (html, svg, Office com macro) — arma de
+        golpe de verdade, mas também arquivo de trabalho legítimo;
+      - ou não é nada que a gente reconheça, inclusive o caso de vir sem
+        extensão com o MIME coringa 'application/octet-stream'.
+
+    Não bloqueamos: avisamos. Bloquear por octet-stream derrubaria anexo
+    legítimo em massa, mas entregar como link normal é como o próximo tipo
+    de golpe entra sem ninguém desconfiar.
+    """
+    ext = _extensao_arquivo(filename)
+    m = (mime or '').split(';')[0].strip().lower()
+    if ext in EXT_AVISO or m in MIME_AVISO:
+        return True, ext or m
+    if ext in EXT_ESPERADAS:
+        return False, ext
+    if m in MIME_ESPERADOS or m.split('/')[0] in ('image', 'audio', 'video'):
+        return False, ext
+    return True, ext
+
+
+MIME_ESPERADOS = {
+    'application/pdf', 'text/plain', 'text/csv', 'text/xml', 'application/xml',
+    'application/msword', 'application/vnd.ms-excel', 'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'application/vnd.oasis.opendocument.text',
+    'application/vnd.oasis.opendocument.spreadsheet',
+    'application/vnd.oasis.opendocument.presentation',
+    'application/rtf', 'text/rtf',
+    'text/vcard', 'text/x-vcard', 'text/calendar',
+}
 
 
 def _salvar_midia_recebida(empresa, msg, media_id, mime_hint=''):
@@ -281,16 +445,33 @@ def _process_incoming_message(message, contacts, empresa):
         # de tipo perigoso não é baixado pro servidor e vai pro inbox marcado
         # pra exibir aviso em vez de link clicável. O atendente vê o que era,
         # mas não tem como abrir por reflexo.
-        if msg_type == 'document':
-            nome_arq = bloco.get('filename') or legenda
+        # O nome do arquivo é SÓ o filename. A legenda é texto escrito pelo
+        # cliente — deixar ela decidir se o anexo é seguro seria entregar a
+        # chave pro golpista ("mando o .js sem filename e escrevo nota.pdf").
+        nome_arq = (bloco.get('filename') or '').strip()
+        caption = (bloco.get('caption') or '').strip()
+        if nome_arq or msg_type == 'document':
             perigoso, rotulo_ext = anexo_perigoso(nome_arq, midia_mime)
-            if perigoso:
-                midia_id = ''  # impede o download em _salvar_midia_recebida
-                texto = f'[bloqueado:{rotulo_ext}] {nome_arq}'.strip()
-                logger.warning(
-                    f'[{empresa.slug}] anexo perigoso bloqueado de {from_number}: '
-                    f'{nome_arq!r} (mime={midia_mime})'
-                )
+            estranho, ext_estranha = (False, '')
+            if not perigoso:
+                estranho, ext_estranha = anexo_desconhecido(nome_arq, midia_mime)
+            if perigoso or estranho:
+                marca = (f'bloqueado:{rotulo_ext}' if perigoso
+                         else f'suspeito:{ext_estranha}')
+                # A legenda fica: é nela que o cliente diz "pode faturar".
+                visivel = ' — '.join(p for p in (nome_arq or '(sem nome)', caption) if p)
+                texto = f'[{marca}] {visivel}'
+                if perigoso:
+                    midia_id = ''  # impede o download em _salvar_midia_recebida
+                    logger.warning(
+                        f'[{empresa.slug}] anexo perigoso bloqueado de {from_number}: '
+                        f'{nome_arq!r} (mime={midia_mime})'
+                    )
+                else:
+                    logger.info(
+                        f'[{empresa.slug}] anexo a confirmar de {from_number}: '
+                        f'{nome_arq!r} (mime={midia_mime})'
+                    )
     elif msg_type == 'unsupported':
         # A Meta manda isso quando o cliente envia algo que a Cloud API não
         # entrega (enquete, visualização única, contato, localização ao vivo…).

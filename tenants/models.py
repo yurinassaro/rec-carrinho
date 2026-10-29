@@ -495,6 +495,20 @@ class Empresa(models.Model):
         verbose_name='Hora da troca',
         help_text='A que horas passa do atendente da manhã para o da tarde (0 a 23).'
     )
+    PREFIXO_ATENDENTE_CHOICES = [
+        ('', 'Não assinar'),
+        ('primeira', 'Só na primeira mensagem da conversa'),
+        ('sempre', 'Em toda mensagem'),
+    ]
+    inbox_prefixo_atendente = models.CharField(
+        max_length=10, blank=True, default='', choices=PREFIXO_ATENDENTE_CHOICES,
+        verbose_name='Assinar as mensagens do inbox',
+        help_text=(
+            'Põe "Atendente Fulano" como título em cima do que o atendente escreve, '
+            'para o cliente saber com quem está falando. "Só na primeira" evita repetir '
+            'o nome a cada linha de uma mesma conversa.'
+        ),
+    )
 
     @property
     def atendente_de_plantao(self):
@@ -504,6 +518,16 @@ class Empresa(models.Model):
         if hora < (self.hora_troca_atendente or 15):
             return (self.atendente_manha or self.atendente_tarde or '').strip()
         return (self.atendente_tarde or self.atendente_manha or '').strip()
+
+    @property
+    def atendentes(self):
+        """Os nomes cadastrados, na ordem do turno. Serve de lista branca: o
+        nome vai pro cliente, então não aceitamos texto solto vindo da tela."""
+        nomes = []
+        for n in ((self.atendente_manha or '').strip(), (self.atendente_tarde or '').strip()):
+            if n and n not in nomes:
+                nomes.append(n)
+        return nomes
 
     # Metadados
     created_at = models.DateTimeField(auto_now_add=True)

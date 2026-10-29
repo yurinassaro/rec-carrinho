@@ -131,8 +131,10 @@ class EmpresaAdmin(admin.ModelAdmin):
             'description': 'A logo aparece na barra de cima do inbox.'
         }),
         ('Quem esta atendendo', {
-            'fields': ('atendente_manha', 'atendente_tarde', 'hora_troca_atendente'),
-            'description': 'O nome entra sozinho nas mensagens que dizem "meu nome e ...", conforme a hora.'
+            'fields': ('atendente_manha', 'atendente_tarde', 'hora_troca_atendente',
+                       'inbox_prefixo_atendente'),
+            'description': 'O nome entra sozinho nas mensagens que dizem "meu nome e ...", conforme a hora. '
+                           'E, se voce quiser, assina as mensagens do inbox com "Atendente Fulano".'
         }),
         ('Acoes', {
             'fields': ('painel_acoes',),
@@ -227,8 +229,10 @@ class EmpresaAdmin(admin.ModelAdmin):
             'description': 'Informacoes basicas da sua empresa. A foto aparece na barra de cima do inbox — use a mesma do perfil do WhatsApp (quadrada, a partir de 200x200).'
         }),
         ('Quem esta atendendo', {
-            'fields': ('atendente_manha', 'atendente_tarde', 'hora_troca_atendente'),
-            'description': 'O nome entra sozinho nas mensagens que dizem "meu nome e ...", conforme a hora.'
+            'fields': ('atendente_manha', 'atendente_tarde', 'hora_troca_atendente',
+                       'inbox_prefixo_atendente'),
+            'description': 'O nome entra sozinho nas mensagens que dizem "meu nome e ...", conforme a hora. '
+                           'E, se voce quiser, assina as mensagens do inbox com "Atendente Fulano".'
         }),
         ('Acoes', {
             'fields': ('painel_acoes',),
