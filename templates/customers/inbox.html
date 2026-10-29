@@ -812,7 +812,7 @@ function renderChat() {
         <button id="btnAudio" type="button" title="Gravar audio">🎤</button>
         <button id="btnRapidas" type="button" title="Mensagens rápidas (ou digite / na mensagem)">⚡</button>
         <button id="btnIA" type="button" title="Sugerir resposta com a IA — você revisa antes de enviar">🧠</button>
-        <textarea id="msgInput" placeholder="Digite sua mensagem... (/pix busca as prontas)" rows="1"></textarea>
+        <textarea id="msgInput" placeholder="Digite sua mensagem... (/pix busca as prontas · cole um print com Ctrl+V)" rows="1"></textarea>
         <button id="btnEnviar" class="send" title="Enviar">➤</button>
       </div>
     </div>
@@ -952,6 +952,12 @@ function attachChatListeners() {
   // Janela fechada: o seletor de templates ocupa o lugar do compositor.
   if (document.getElementById('tplSelect')) montarTemplates();
   const file = document.getElementById('fileInput');
+  // Colar print funciona com o foco em qualquer lugar da conversa, não só no
+  // campo: quem acabou de dar Cmd+Shift+4 não clicou em nada ainda.
+  if (!window._colarLigado) {
+    document.addEventListener('paste', colarImagem);
+    window._colarLigado = true;
+  }
   if (file) file.addEventListener('change', previewArquivo);
   const btnA = document.getElementById('btnAudio');
   if (btnA) btnA.addEventListener('click', toggleRecord);
@@ -1096,6 +1102,34 @@ function previewArquivo() {
     STATE.audioBlob = null;
     mostrarPreview(f, f.name, f.type || '');
   }
+}
+
+// Print da tela colado direto na conversa: Cmd+V no Mac, Ctrl+V no Windows.
+// O navegador entrega a imagem da área de transferência igual nos dois; o que
+// muda é só a tecla, que nem chega aqui. Vira anexo normal — aparece na prévia
+// e sai no Enviar, nunca sozinho.
+function colarImagem(e) {
+  const dados = e.clipboardData;
+  if (!dados) return;
+  const item = [...(dados.items || [])].find(i => i.kind === 'file' && (i.type || '').startsWith('image/'));
+  if (!item) return;  // colou texto: deixa o campo fazer o trabalho dele
+  const arquivo = item.getAsFile();
+  if (!arquivo) return;
+  e.preventDefault();
+
+  // Print vem sem nome ("image.png" ou vazio): carimba a hora pra não virar
+  // uma pilha de arquivos iguais no histórico.
+  const d = new Date();
+  const dois = n => ('0' + n).slice(-2);
+  const ext = (arquivo.type.split('/')[1] || 'png').split('+')[0];
+  const nome = `print-${d.getFullYear()}${dois(d.getMonth() + 1)}${dois(d.getDate())}`
+             + `-${dois(d.getHours())}${dois(d.getMinutes())}${dois(d.getSeconds())}.${ext}`;
+
+  STATE.arquivoAtual = new File([arquivo], nome, { type: arquivo.type });
+  STATE.audioBlob = null;
+  mostrarPreview(STATE.arquivoAtual, nome, arquivo.type);
+  const inp = document.getElementById('msgInput');
+  if (inp) inp.focus();  // o texto da legenda continua de onde parou
 }
 function limparArquivo() {
   STATE.arquivoAtual = null;
