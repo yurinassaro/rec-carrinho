@@ -130,6 +130,10 @@ class EmpresaAdmin(admin.ModelAdmin):
             'fields': ('nome', 'slug', 'dominio', 'ativo', 'plano', 'logo'),
             'description': 'A logo aparece na barra de cima do inbox.'
         }),
+        ('Quem esta atendendo', {
+            'fields': ('atendente_manha', 'atendente_tarde', 'hora_troca_atendente'),
+            'description': 'O nome entra sozinho nas mensagens que dizem "meu nome e ...", conforme a hora.'
+        }),
         ('Acoes', {
             'fields': ('painel_acoes',),
             'description': 'Acoes manuais para sincronizar dados e enviar mensagens.'
@@ -221,6 +225,10 @@ class EmpresaAdmin(admin.ModelAdmin):
         ('Informacoes da Empresa', {
             'fields': ('nome', 'logo'),
             'description': 'Informacoes basicas da sua empresa. A foto aparece na barra de cima do inbox — use a mesma do perfil do WhatsApp (quadrada, a partir de 200x200).'
+        }),
+        ('Quem esta atendendo', {
+            'fields': ('atendente_manha', 'atendente_tarde', 'hora_troca_atendente'),
+            'description': 'O nome entra sozinho nas mensagens que dizem "meu nome e ...", conforme a hora.'
         }),
         ('Acoes', {
             'fields': ('painel_acoes',),

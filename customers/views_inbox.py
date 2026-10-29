@@ -455,6 +455,126 @@ def inbox_resposta_usada(request):
     return JsonResponse({'success': True})
 
 
+RE_PARAM_TEMPLATE = re.compile(r'\{\{(\d+)\}\}')
+
+
+def _params_do_template(info):
+    """Quantas variáveis o template pede ({{1}}, {{2}}…) — é o maior índice usado."""
+    texto = (info.get('header') or '') + ' ' + (info.get('body') or '')
+    indices = [int(n) for n in RE_PARAM_TEMPLATE.findall(texto)]
+    return max(indices) if indices else 0
+
+
+@login_required
+def inbox_templates_api(request):
+    """
+    Templates aprovados na Meta, pro atendente reabrir conversa com a janela
+    fechada sem ter que ir no admin. A lista vem da Meta (cache de 1h).
+    """
+    tenant = getattr(request, 'tenant', None)
+    if not tenant:
+        return JsonResponse({'templates': []})
+
+    templates = []
+    for nome, info in sorted(_carregar_templates_meta(tenant).items()):
+        templates.append({
+            'nome': nome,
+            'params': _params_do_template(info),
+            # Prévia com as variáveis à mostra, pra ele ver onde cada uma entra.
+            'previa': _renderizar_template(info, []),
+        })
+    return JsonResponse({
+        'templates': templates,
+        # Quem assina agora: o template de abertura diz "meu nome é ..." e o
+        # nome muda com a hora. Quem sabe a hora certa é o servidor.
+        'atendente': tenant.atendente_de_plantao,
+    })
+
+
+@login_required
+@require_POST
+def inbox_enviar_template(request):
+    """
+    Envia um template aprovado — o único caminho permitido pela Meta fora da
+    janela de 24h. É o que reabre a conversa quando o cliente sumiu faz tempo.
+    """
+    tenant = getattr(request, 'tenant', None)
+    if not tenant:
+        return JsonResponse({'success': False, 'error': 'tenant nao encontrado'}, status=400)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({'success': False, 'error': 'JSON invalido'}, status=400)
+
+    telefone = (data.get('telefone') or '').strip()
+    nome_template = (data.get('template') or '').strip()
+    params = [str(p).strip() for p in (data.get('params') or [])]
+
+    if not telefone or not nome_template:
+        return JsonResponse({'success': False, 'error': 'telefone e template sao obrigatorios'}, status=400)
+
+    # Só templates aprovados DESTA empresa — o nome vem do navegador.
+    disponiveis = _carregar_templates_meta(tenant)
+    info = disponiveis.get(nome_template)
+    if info is None:
+        return JsonResponse(
+            {'success': False, 'error': 'Template nao encontrado entre os aprovados'}, status=400,
+        )
+
+    exigidos = _params_do_template(info)
+    if len([p for p in params if p]) < exigidos:
+        return JsonResponse(
+            {'success': False, 'error': f'Este template precisa de {exigidos} variavel(is)'}, status=400,
+        )
+
+    client = MetaWhatsAppClient(
+        phone_number_id=tenant.meta_phone_number_id,
+        access_token=tenant.meta_access_token,
+    )
+    if not client.esta_configurado():
+        return JsonResponse({'success': False, 'error': 'Meta WhatsApp nao configurado'}, status=500)
+
+    # Idioma errado é o erro #132001, o mais comum aqui — pergunta pra Meta.
+    from customers.services.meta_promocoes import _detectar_idioma_template
+    idioma = _detectar_idioma_template(tenant, nome_template)
+
+    resultado = client.enviar_template(telefone, nome_template, params[:exigidos], language=idioma)
+    success = resultado.get('success', False)
+    response_data = resultado.get('response', {}) if success else {}
+    wamid = ''
+    if success:
+        msgs = response_data.get('messages', [])
+        if msgs:
+            wamid = msgs[0].get('id', '')
+
+    ultima = MensagemWhatsApp.objects.filter(
+        empresa=tenant, canal='meta',
+        destinatario_telefone__in=list(_variantes_na_base(tenant, telefone)),
+    ).order_by('-created_at').first()
+
+    msg = MensagemWhatsApp.objects.create(
+        empresa=tenant,
+        tipo='atendimento_humano',
+        canal='meta',
+        status='enviado' if success else 'falha',
+        destinatario_nome=ultima.destinatario_nome if ultima else '',
+        destinatario_telefone=telefone,
+        mensagem_texto=_renderizar_template(info, params[:exigidos]),
+        template_name=nome_template,
+        template_params=params[:exigidos],
+        meta_message_id=wamid,
+        api_response=response_data,
+        error_message=resultado.get('error', '') if not success else '',
+    )
+
+    return JsonResponse({
+        'success': success,
+        'error': resultado.get('error', ''),
+        'mensagem': _serializar_mensagem(msg, msg.mensagem_texto) if success else None,
+    })
+
+
 def _conversa_para_ia(tenant, telefones, limite=20):
     """
     Últimas mensagens da conversa no formato que o copiloto espera:

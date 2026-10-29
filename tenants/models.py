@@ -477,6 +477,34 @@ class Empresa(models.Model):
         help_text='Cor em hexadecimal (ex: #79aec8)'
     )
 
+    # Quem está atendendo agora. O template de abertura diz "meu nome é X", e X
+    # muda com a hora: a Tarragona tem a Yasmin de manhã e o André à tarde.
+    # Fica em campo porque atendente entra e sai, e cada empresa tem a sua escala.
+    atendente_manha = models.CharField(
+        max_length=60, blank=True, default='',
+        verbose_name='Atendente da manhã',
+        help_text='Nome que aparece nas mensagens antes do horário de troca (ex: Yasmin).'
+    )
+    atendente_tarde = models.CharField(
+        max_length=60, blank=True, default='',
+        verbose_name='Atendente da tarde',
+        help_text='Nome que aparece nas mensagens a partir do horário de troca (ex: André).'
+    )
+    hora_troca_atendente = models.PositiveSmallIntegerField(
+        default=15,
+        verbose_name='Hora da troca',
+        help_text='A que horas passa do atendente da manhã para o da tarde (0 a 23).'
+    )
+
+    @property
+    def atendente_de_plantao(self):
+        """Quem assina a mensagem agora, no fuso da própria empresa."""
+        from django.utils import timezone as _tz
+        hora = _tz.localtime().hour
+        if hora < (self.hora_troca_atendente or 15):
+            return (self.atendente_manha or self.atendente_tarde or '').strip()
+        return (self.atendente_tarde or self.atendente_manha or '').strip()
+
     # Metadados
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

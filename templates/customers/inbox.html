@@ -3,16 +3,34 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- viewport-fit=cover: sem isso o iPhone não entrega os env(safe-area-*), e o
+     compositor fica debaixo da barra de gestos.
+     interactive-widget: pede ao Android que o teclado ENCOLHA o layout em vez de
+     cobri-lo — cobrindo, os botões ficam debaixo dele e o body é overflow:hidden,
+     então não há como rolar até lá. Safari e Chrome antigo ignoram a chave. -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Inbox WhatsApp — {{ request.tenant.nome|default:"CRM" }}</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #e5ddd5; height: 100vh; overflow: hidden; }
+  /* --altura-app: a altura que o inbox tem DE VERDADE. 100vh mente no celular
+     (conta a barra do navegador como se não existisse); dvh corrige isso, mas
+     nenhum dos dois sabe do teclado — ele COBRE a tela em vez de encolhê-la.
+     Quem corrige é o JS lá no fim (seguirTeclado). Três degraus: px medido >
+     dvh > vh, e navegador velho fica no vh, exatamente como era antes. */
+  :root { --altura-app: 100vh; }
+  @supports (height: 100dvh) { :root { --altura-app: 100dvh; } }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #e5ddd5; height: 100vh; height: var(--altura-app); overflow: hidden; }
+  /* Puxar pra baixo em cima de qualquer coisa que não rola (a barra verde, o
+     cabeçalho, o compositor) aciona o "recarregar" do Chrome no Android — e o
+     rascunho do atendente mora só no campo: recarregar apaga tudo. */
+  html, body { overscroll-behavior-y: contain; }
   .topbar { background: #075E54; color: white; padding: 10px 20px; display: flex; align-items: center; gap: 16px; height: 50px; }
   .topbar h1 { font-size: 1.1rem; font-weight: 500; }
   .topbar a { color: white; text-decoration: none; font-size: 0.85rem; opacity: 0.85; }
   .topbar a:hover { opacity: 1; }
   .topbar .grow { flex: 1; }
+  .topbar .nome-loja { opacity: 0.7; font-size: 0.85rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .topbar .rotulo-live { font-size: 0.8rem; opacity: 0.7; }
   /* Foto da loja: redonda como no WhatsApp. Fundo branco porque logo com fundo
      transparente sumiria no verde da barra. */
   .topbar .logo-empresa {
@@ -22,7 +40,7 @@
   .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #25d366; animation: pulse 1.5s infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
-  .container { display: flex; height: calc(100vh - 50px); background: #f0f2f5; }
+  .container { display: flex; height: calc(100vh - 50px); height: calc(var(--altura-app) - 50px); background: #f0f2f5; }
 
   .sidebar { width: 380px; background: white; border-right: 1px solid #d1d7db; display: flex; flex-direction: column; }
   .search { padding: 10px 14px; background: #f0f2f5; }
@@ -91,7 +109,12 @@
   .rr-painel {
     display: none; position: absolute; bottom: 100%; left: 0; right: 0; margin-bottom: 8px;
     background: white; border: 1px solid #d1d7db; border-radius: 10px;
-    box-shadow: 0 6px 24px rgba(0,0,0,0.18); max-height: 46vh; overflow: hidden;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.18);
+    max-height: 46vh;                                        /* reserva */
+    /* Com o teclado aberto sobra pouca tela: sem isso o painel sobe além do
+       topo e o PRIMEIRO item — o que o Enter insere — nasce fora da vista. */
+    max-height: min(46vh, calc(var(--altura-app) - 200px));
+    overflow: hidden;
     flex-direction: column; z-index: 20;
   }
   .rr-painel.aberto { display: flex; }
@@ -156,7 +179,21 @@
   .composer button.send { background: #00a884; }
   .composer button.send:hover:not(:disabled) { background: #008f72; }
   .composer button:disabled { background: #d1d7db; cursor: not-allowed; }
-  .composer-disabled { padding: 16px; background: #fff3cd; color: #6c4a00; font-size: 13px; text-align: center; }
+  .composer-disabled { padding: 12px 16px; background: #fff3cd; color: #6c4a00; font-size: 13px; }
+  .cd-aviso { text-align: center; margin-bottom: 8px; }
+  .tpl-linha { display: flex; gap: 8px; align-items: center; }
+  .tpl-linha select { flex: 1; padding: 8px 10px; border: 1px solid #d1d7db; border-radius: 8px; font-size: 13px; background: #fff; }
+  .tpl-linha button { padding: 8px 14px; border: none; border-radius: 8px; background: #25d366; color: #fff; font-weight: 600; font-size: 13px; cursor: pointer; }
+  .tpl-linha button:disabled { background: #b5c0c5; cursor: default; }
+  .tpl-params { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .tpl-params input { flex: 1; min-width: 140px; padding: 7px 10px; border: 1px solid #d1d7db; border-radius: 8px; font-size: 13px; }
+  /* Atalhos de preenchimento: o nome do cliente e o atendente de plantão. */
+  .tpl-atalhos { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; font-size: 11px; color: #6c4a00; }
+  .tpl-chip { border: 1px solid #e0b700; background: #fff; color: #6c4a00; border-radius: 14px; padding: 5px 10px; font-size: 12px; cursor: pointer; }
+  .tpl-chip:hover { background: #fff8e1; }
+  /* Prévia do texto exato que o cliente vai receber — template se paga, não se manda às cegas. */
+  .tpl-previa { margin-top: 8px; padding: 8px 10px; background: #fff; border: 1px solid #ffe08a; border-radius: 8px; white-space: pre-wrap; font-size: 12px; color: #3b4a54; max-height: 120px; overflow-y: auto; display: none; }
+  .tpl-previa.on { display: block; }
   .file-preview { display: none; background: #fff; border-top: 1px solid #d1d7db; padding: 10px 16px; font-size: 13px; }
   .fp-row { display: flex; align-items: center; gap: 12px; }
   .fp-thumb { width: 60px; height: 60px; border-radius: 8px; object-fit: cover; background: #e9edef; flex: none; display: block; }
@@ -189,7 +226,53 @@
     .chat-header .meta { min-width: 0; flex: 1; }
     .chat-header .nome, .chat-header .tel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .btn-fechar { font-size: 11px; padding: 5px 8px; }
-    .composer textarea { font-size: 16px; }  /* < 16px o iOS dá zoom ao focar */
+
+    /* No celular o campo NÃO divide a linha com os botões: cinco ícones de 42px
+       deixavam 98px pro texto, e até o placeholder nascia cortado. Texto em cima
+       ocupando a largura toda, ícones embaixo — e o enviar no canto direito. */
+    .composer {
+      flex-wrap: wrap; gap: 8px; padding: 8px 10px;
+      /* Barra de gestos do iPhone: sem isso ela fica por cima dos botões. */
+      padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+    }
+    .composer textarea {
+      order: -1; flex: 1 0 100%; width: 100%;
+      font-size: 16px;            /* < 16px o iOS dá zoom ao focar */
+      max-height: 40vh;                            /* reserva */
+      max-height: calc(var(--altura-app) * 0.4);   /* encolhe junto quando o teclado sobe */
+    }
+    /* 42px é o mínimo confortável pro dedo (Apple pede 44, Material 48) — na
+       linha de baixo sobra largura, então não vale apertar. */
+    .composer button, .composer label { width: 42px; height: 42px; font-size: 18px; }
+    .composer button.send { margin-left: auto; }
+    .composer-disabled { padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+
+    /* 60px de margem de cada lado numa tela de 390px comiam 30% da largura: as
+       bolhas ficavam espremidas num corredor. */
+    .messages { padding: 12px 10px; }
+
+    /* Rolar as mensagens não arrasta a página inteira junto. */
+    .messages, .conversas { overscroll-behavior: contain; }
+
+    /* Os outros campos também precisam de 16px, senão o iOS dá zoom ao focar e
+       a tela fica torta até o atendente fechar o teclado. */
+    .search input, .rr-topo input, .tpl-params input, .tpl-linha select { font-size: 16px; }
+
+    /* O flash azul do Android ao tocar: fica feio em botão redondo. */
+    button, label, .conv-item, .rr-item { -webkit-tap-highlight-color: transparent; }
+
+    /* A barra pedia ~440px de conteúdo numa tela de 390: Admin e CRM saíam da
+       tela e, com overflow:hidden, não havia como rolar até eles. Some o título
+       (quem abriu o inbox sabe onde está) e a palavra "Live" (a bolinha verde
+       já diz isso). O nome da loja fica: é o que muda entre Tarragona, Anac e
+       Plantec, e empresa sem logo não teria outra identificação.
+       A altura segue 50px DE PROPÓSITO — é o 50 do calc do .container. */
+    .topbar { padding: 0 12px; gap: 10px; }
+    .topbar h1 { display: none; }
+    .topbar .rotulo-live { display: none; }
+    .topbar .nome-loja { font-size: 0.95rem; opacity: 1; }
+    /* Alvo de dedo dentro dos 50px da barra, sem mudar a altura dela. */
+    .topbar a { padding: 15px 6px; font-size: 0.9rem; opacity: 1; }
   }
 </style>
 </head>
@@ -199,10 +282,10 @@
     <img class="logo-empresa" src="{{ request.tenant.logo.url }}" alt="{{ request.tenant.nome }}">
   {% endif %}
   <h1>📨 Inbox WhatsApp</h1>
-  <span style="opacity:0.7;font-size:0.85rem;">{{ request.tenant.nome }}</span>
+  <span class="nome-loja">{{ request.tenant.nome }}</span>
   <span class="grow"></span>
   <span class="live-dot" title="Atualização em tempo real"></span>
-  <span style="font-size:0.8rem;opacity:0.7;">Live</span>
+  <span class="rotulo-live">Live</span>
   <a href="/admin/customers/mensagemwhatsapp/">Admin</a>
   <a href="/crm/">CRM</a>
 </div>
@@ -492,6 +575,15 @@ function renderRapidas() {
   if (sel) sel.scrollIntoView({ block: 'nearest' });
 }
 
+// O campo cresce conforme se escreve, até o limite que o CSS manda — que é
+// maior no celular, onde a tela é estreita e o texto quebra em muito mais linhas.
+function ajustarAltura(inp) {
+  if (!inp) return;
+  inp.style.height = 'auto';
+  const limite = parseFloat(getComputedStyle(inp).maxHeight) || 120;
+  inp.style.height = Math.min(inp.scrollHeight, limite) + 'px';
+}
+
 function inserirResposta(r) {
   if (!r) return;
   const inp = document.getElementById('msgInput');
@@ -499,8 +591,7 @@ function inserirResposta(r) {
   // O atendente revisa antes de mandar: a mensagem entra no campo, não no envio.
   inp.value = (r.texto || '').replace(/\{nome\}/g, primeiroNome());
   fecharRapidas();
-  inp.style.height = 'auto';
-  inp.style.height = Math.min(inp.scrollHeight, 120) + 'px';
+  ajustarAltura(inp);
   const fd = new FormData();
   fd.append('id', r.id);
   fetch('/crm/inbox/api/respostas/usada/', {
@@ -665,8 +756,7 @@ function restaurarCompositor(salvo) {
   const inp = document.getElementById('msgInput');
   if (inp) {
     inp.value = salvo.texto;
-    inp.style.height = 'auto';
-    inp.style.height = Math.min(inp.scrollHeight, 120) + 'px';
+    ajustarAltura(inp);
     if (salvo.focado) {
       inp.focus();
       try { inp.setSelectionRange(salvo.selIni, salvo.selFim); } catch (e) { /* campo vazio */ }
@@ -729,7 +819,17 @@ function renderChat() {
     <div class="file-preview" id="filePreview">
       <div class="fp-row" id="fpRow"></div>
     </div>
-  ` : `<div class="composer-disabled">⚠️ Janela 24h fechada — envie um template aprovado pelo admin.</div>`;
+  ` : `
+    <div class="composer-disabled">
+      <div class="cd-aviso">⚠️ Janela 24h fechada — só template aprovado reabre esta conversa.</div>
+      <div class="tpl-linha">
+        <select id="tplSelect"><option value="">Carregando templates…</option></select>
+        <button id="btnTplEnviar" type="button" disabled>Enviar template</button>
+      </div>
+      <div class="tpl-params" id="tplParams"></div>
+      <div class="tpl-atalhos" id="tplAtalhos"></div>
+      <div class="tpl-previa" id="tplPrevia"></div>
+    </div>`;
 
   // Só aparece com conversa em aberto: ler não tira o aviso, fechar sim.
   const fecharHtml = c.nao_respondidas > 0
@@ -829,7 +929,28 @@ function renderMsgHtml(m) {
   </div></div>`;
 }
 
+// No celular o teclado cai quando o <textarea> é destruído, e focus() sem toque
+// do dedo não o reabre no iPhone: o atendente perderia o teclado no meio da
+// frase, justo quando o cliente responde. Com o campo em foco, só acrescenta as
+// bolhas que faltam em vez de refazer o painel inteiro.
+function acrescentarNovasMsgs() {
+  const msgsEl = document.getElementById('messagesEl');
+  const inp = document.getElementById('msgInput');
+  if (!msgsEl || !inp || document.activeElement !== inp) return false;
+  STATE.mensagens
+    .filter(m => m.id > 0 && !msgsEl.querySelector('.msg[data-id="' + m.id + '"]'))
+    .forEach(m => {
+      msgsEl.insertAdjacentHTML('beforeend', renderMsgHtml(m));
+      // só as bolhas novas: as antigas já têm o listener
+      const b = msgsEl.querySelector('.msg[data-id="' + m.id + '"] [data-responder]');
+      if (b) b.addEventListener('click', () => responderMensagem(+b.dataset.responder));
+    });
+  return true;
+}
+
 function attachChatListeners() {
+  // Janela fechada: o seletor de templates ocupa o lugar do compositor.
+  if (document.getElementById('tplSelect')) montarTemplates();
   const file = document.getElementById('fileInput');
   if (file) file.addEventListener('change', previewArquivo);
   const btnA = document.getElementById('btnAudio');
@@ -875,8 +996,7 @@ function attachChatListeners() {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviarMensagem(); }
     });
     inp.addEventListener('input', () => {
-      inp.style.height = 'auto';
-      inp.style.height = Math.min(inp.scrollHeight, 120) + 'px';
+      ajustarAltura(inp);
       // Igual ao WhatsApp Business: "/pix" digitado na mensagem vai filtrando
       // as prontas ao vivo, sem tirar o foco de onde o atendente está escrevendo.
       if (inp.value.startsWith('/')) {
@@ -986,6 +1106,14 @@ function limparArquivo() {
   const fp = document.getElementById('filePreview'); if (fp) fp.style.display = 'none';
 }
 
+// O Safari não grava webm (nem no iPhone, nem no Mac): pedir audio/webm fazia o
+// MediaRecorder estourar, e o atendente via "erro no microfone" sem ter nada a
+// ver com o microfone. Deixa o navegador escolher o que ele sabe gravar.
+function formatoAudio() {
+  if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return '';
+  return ['audio/webm', 'audio/mp4'].find(t => MediaRecorder.isTypeSupported(t)) || '';
+}
+
 async function toggleRecord() {
   const btn = document.getElementById('btnAudio');
   if (STATE.gravando) {
@@ -995,15 +1123,24 @@ async function toggleRecord() {
     btn.style.background = '#54656f';
     return;
   }
+  // Sem https (ou no navegador embutido do WhatsApp) o microfone nem é exposto:
+  // melhor explicar o que fazer do que mostrar um erro técnico.
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+    alert('Gravar áudio só funciona em conexão segura (https) e no navegador do sistema. Use o 📎 para anexar um áudio.');
+    return;
+  }
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    STATE.mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+    const tipo = formatoAudio();
+    STATE.mediaRecorder = new MediaRecorder(stream, tipo ? { mimeType: tipo } : {});
     STATE.audioChunks = [];
     STATE.mediaRecorder.ondataavailable = e => STATE.audioChunks.push(e.data);
     STATE.mediaRecorder.onstop = () => {
-      STATE.audioBlob = new Blob(STATE.audioChunks, { type: 'audio/webm' });
+      // o tipo real é o que o navegador gravou, não o que a gente pediu
+      const real = (STATE.mediaRecorder.mimeType || tipo || 'audio/mp4').split(';')[0];
+      STATE.audioBlob = new Blob(STATE.audioChunks, { type: real });
       STATE.arquivoAtual = null;
-      mostrarPreview(STATE.audioBlob, 'Áudio gravado', 'audio/webm');
+      mostrarPreview(STATE.audioBlob, 'Áudio gravado', real);
       stream.getTracks().forEach(t => t.stop());
     };
     STATE.mediaRecorder.start();
@@ -1092,7 +1229,10 @@ async function enviarMensagem() {
       const fd = new FormData();
       fd.append('telefone', STATE.telSelecionado);
       fd.append('texto', texto);
-      fd.append('arquivo', arquivo, arquivo.name || 'audio.webm');
+      // A extensão segue o formato que o navegador gravou (webm no Android,
+      // mp4 no iPhone) — o servidor converte pra MP3 de qualquer jeito.
+      const ext = ((arquivo.type || '').split('/')[1] || 'webm').split(';')[0];
+      fd.append('arquivo', arquivo, arquivo.name || ('audio.' + ext));
       if (respondendoId) fd.append('responder_msg_id', respondendoId);
       r = await fetch('/crm/inbox/enviar/', {
         method: 'POST',
@@ -1127,6 +1267,149 @@ async function enviarMensagem() {
   }
 }
 
+// ============ TEMPLATES (janela 24h fechada) ============
+// Fora das 24h a Meta só aceita template aprovado. Antes o atendente tinha que
+// sair do inbox e ir no admin; agora escolhe aqui, com prévia — template é pago,
+// ninguém manda às cegas.
+// As chaves duplas montadas em pedaços: este arquivo passa pelo Django, e ele
+// engoliria uma chave dupla literal achando que é variável de template dele.
+const CHAVE_ABRE = '{' + '{', CHAVE_FECHA = '}' + '}';
+const marcador = n => CHAVE_ABRE + n + CHAVE_FECHA;
+
+async function carregarTemplates() {
+  if (STATE.templates) return STATE.templates;
+  try {
+    const r = await fetch('/crm/inbox/api/templates/');
+    const data = await r.json();
+    STATE.templates = data.templates || [];
+    STATE.atendente = data.atendente || '';
+  } catch (e) { STATE.templates = []; }
+  return STATE.templates;
+}
+
+function templateSelecionado() {
+  const sel = document.getElementById('tplSelect');
+  if (!sel || !sel.value) return null;
+  return (STATE.templates || []).find(t => t.nome === sel.value) || null;
+}
+
+function valoresParams() {
+  return [...document.querySelectorAll('#tplParams input')].map(i => i.value);
+}
+
+function previaTemplate() {
+  const t = templateSelecionado();
+  const previa = document.getElementById('tplPrevia');
+  const btn = document.getElementById('btnTplEnviar');
+  if (!previa) return;
+  if (!t) {
+    previa.classList.remove('on');
+    if (btn) btn.disabled = true;
+    return;
+  }
+  let texto = t.previa || '';
+  valoresParams().forEach((v, i) => {
+    if (v.trim()) texto = texto.split(marcador(i + 1)).join(v);
+  });
+  previa.textContent = texto;
+  previa.classList.add('on');
+  // Só libera o envio com todas as variáveis preenchidas: a Meta recusa o resto.
+  if (btn) btn.disabled = valoresParams().filter(v => v.trim()).length < t.params;
+}
+
+function montarParamsTemplate() {
+  const box = document.getElementById('tplParams');
+  const atalhos = document.getElementById('tplAtalhos');
+  if (!box) return;
+  box.innerHTML = '';
+  if (atalhos) atalhos.innerHTML = '';
+  const t = templateSelecionado();
+  if (!t) { previaTemplate(); return; }
+
+  for (let i = 1; i <= t.params; i++) {
+    const inp = document.createElement('input');
+    inp.placeholder = 'variável ' + marcador(i);
+    inp.addEventListener('input', previaTemplate);
+    inp.addEventListener('focus', () => { STATE.tplCampoAtivo = inp; });
+    box.appendChild(inp);
+  }
+  // Nada é preenchido por adivinhação: num template, {{1}} tanto pode ser o
+  // cliente ("Olá {{1}}") quanto o atendente ("meu nome é {{1}}"), e mandar o
+  // nome errado é mancada na cara do cliente. Aqui vira um toque, com a prévia
+  // mostrando onde foi parar.
+  const nome = ((STATE.convInfo && STATE.convInfo.nome) || '').trim();
+  const sugestoes = [];
+  if (nome && !/^\d+$/.test(nome)) sugestoes.push({ rotulo: '👤 ' + nome.split(' ')[0], valor: nome.split(' ')[0] });
+  if (STATE.atendente) sugestoes.push({ rotulo: '🙋 ' + STATE.atendente, valor: STATE.atendente, titulo: 'Atendente de plantão agora' });
+  if (atalhos && t.params && sugestoes.length) {
+    atalhos.appendChild(document.createTextNode('Preencher com: '));
+    sugestoes.forEach(s => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'tpl-chip';
+      b.textContent = s.rotulo;
+      if (s.titulo) b.title = s.titulo;
+      b.addEventListener('click', () => {
+        const alvo = (STATE.tplCampoAtivo && box.contains(STATE.tplCampoAtivo))
+          ? STATE.tplCampoAtivo
+          : [...box.querySelectorAll('input')].find(i => !i.value.trim()) || box.querySelector('input');
+        if (!alvo) return;
+        alvo.value = s.valor;
+        alvo.focus();
+        previaTemplate();
+      });
+      atalhos.appendChild(b);
+    });
+  }
+  previaTemplate();
+}
+
+async function montarTemplates() {
+  const sel = document.getElementById('tplSelect');
+  if (!sel) return;
+  const lista = await carregarTemplates();
+  sel.innerHTML = lista.length
+    ? '<option value="">Escolha um template…</option>' + lista.map(t =>
+        `<option value="${escapeHtml(t.nome)}">${escapeHtml(t.nome)}` +
+        `${t.params ? ` — ${t.params} ${t.params > 1 ? 'variáveis' : 'variável'}` : ''}</option>`).join('')
+    : '<option value="">Nenhum template aprovado na Meta</option>';
+  sel.addEventListener('change', montarParamsTemplate);
+  const btn = document.getElementById('btnTplEnviar');
+  if (btn) btn.addEventListener('click', enviarTemplate);
+}
+
+async function enviarTemplate() {
+  const t = templateSelecionado();
+  const btn = document.getElementById('btnTplEnviar');
+  if (!t || !btn) return;
+  btn.disabled = true;
+  btn.textContent = 'Enviando…';
+  try {
+    const r = await fetch('/crm/inbox/enviar-template/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+      body: JSON.stringify({
+        telefone: STATE.telSelecionado, template: t.nome,
+        params: valoresParams().slice(0, t.params),
+      }),
+    });
+    const data = await r.json();
+    if (data.success) {
+      if (data.mensagem) STATE.mensagens.push(data.mensagem);
+      renderChat();
+      scrollToBottom();
+      fetchConversas();
+    } else {
+      alert('Erro: ' + (data.error || 'desconhecido'));
+    }
+  } catch (e) {
+    alert('Erro de rede: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Enviar template';
+  }
+}
+
 // ============ POLLING ============
 async function pollNovasMensagens() {
   if (!STATE.telSelecionado || !STATE.mensagens.length) return;
@@ -1140,7 +1423,7 @@ async function pollNovasMensagens() {
     // re-render so novas msgs (preservando scroll perto do bottom)
     const msgsEl = document.getElementById('messagesEl');
     const atBottom = msgsEl && (msgsEl.scrollTop + msgsEl.clientHeight + 50 >= msgsEl.scrollHeight);
-    renderChat();
+    if (!acrescentarNovasMsgs()) renderChat();
     if (atBottom) scrollToBottom();
   } else if (data && data.conv_info) {
     // atualiza status (ex: lido → ✓✓ azul) sem re-render disruptivo
@@ -1188,6 +1471,36 @@ document.getElementById('searchInput').addEventListener('input', e => {
   clearTimeout(window._buscaTimer);
   window._buscaTimer = setTimeout(fetchConversas, 300);
 });
+
+// O teclado do celular não encolhe a página: ele COBRE a tela. Sem medir a
+// viewport visual, o compositor e as últimas mensagens ficam atrás do teclado —
+// e com body{overflow:hidden} não dá nem pra rolar até eles.
+(function seguirTeclado() {
+  const campo = () => document.getElementById('msgInput');
+  const vv = window.visualViewport;
+  if (!vv) {
+    // Sem a API vale o dvh do CSS; o que ainda precisa é recalcular a altura do
+    // campo ao girar a tela, porque ela fica gravada em px no estilo inline.
+    window.addEventListener('resize', () => ajustarAltura(campo()));
+    return;
+  }
+  let t;
+  const medir = () => {
+    clearTimeout(t);
+    // A barra do Safari anima ao aparecer: sem o respiro, dispara a cada frame.
+    t = setTimeout(() => {
+      if (vv.scale > 1) return;  // deu zoom com dois dedos: é de propósito
+      const msgs = document.getElementById('messagesEl');
+      const noFim = msgs && (msgs.scrollTop + msgs.clientHeight + 50 >= msgs.scrollHeight);
+      document.documentElement.style.setProperty('--altura-app', Math.round(vv.height) + 'px');
+      if (window.scrollY) window.scrollTo(0, 0);  // o iOS desloca a página em vez de rolar
+      ajustarAltura(campo());
+      if (noFim) scrollToBottom();  // a conversa encurtou: o fim sairia de vista
+    }, 60);
+  };
+  vv.addEventListener('resize', medir);
+  medir();
+})();
 
 fetchConversas();
 carregarRespostas();
